@@ -4,6 +4,7 @@ import os, stat, glob, platform
 import pandas as pd
 from pathlib import Path
 from tkinter import ttk
+from VNCdesk import encrypt_vnc_password, resource_path, get_writable_dir
 
 """Alldesk GUI 啟動器
 
@@ -210,7 +211,7 @@ class RustDesk():
         self._prepare_rustdesk_conf(client_id, password)
         # 呼叫可執行檔（使用參數列表較安全）
         subprocess.run(command)
-        # subprocess.Popen(command, creationflags = subprocess.CREATE_NO_WINDOW)
+        # 可改為非同步啟動：subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
     def set_elements_rustdesk(self):
@@ -331,9 +332,180 @@ class AnyDesk():
                 col = 0
                 row += 1
     
+class VNC():
+    """VNC 分頁：從 Alldesk.xlsx 第3張工作表載入項目並啟動 VNC 連線。
+
+    欄位對應：
+    - Item: 顯示在按鈕上的名稱
+    - URL: 目標主機（按鈕上顯示）
+    - Password: 連線密碼（按鈕上不顯示）
+    - Port: 連接埠（按鈕上不顯示）
+    """
+    def __init__(self, notebook: ttk.Notebook):
+        app = 'vnc'
+        excel_path = Path('./Alldesk.xlsx')
+        clients = []
+        if excel_path.exists():
+            try:
+                # 讀取第3張工作表（index=2）並轉為字典列（保留欄名以供對應）
+                df = pd.read_excel(excel_path, sheet_name=2, engine='openpyxl').astype(str).fillna('')
+                clients = df.to_dict(orient='records')
+            except Exception:
+                clients = []
+        else:
+            clients = []
+
+        self.exec_target = 'TightVNC.exe'
+        self.clients = clients
+        self.frame = ttk.Frame(notebook)
+        notebook.add(self.frame, text = 'VNC')
+
+    def _prepare_and_launch_vnc(self, host: str, port: str, password: str):
+        # 以 VNCdesk 的資源路徑與工具產生可寫入的 vnc.vnc 並啟動 TightVNC
+        vnc_source = resource_path('vnc.vnc')
+        if os.path.exists(vnc_source):
+            try:
+                with open(vnc_source, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+            except Exception:
+                lines = []
+        else:
+            lines = []
+
+        out = []
+        in_conn = False
+        replaced = {'host': False, 'port': False, 'password': False}
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if s.lower() == '[connection]':
+                in_conn = True
+                out.append(line)
+                continue
+            if in_conn:
+                if s.startswith('[') and s.endswith(']'):
+                    in_conn = False
+                    out.append(line)
+                    continue
+                if s.lower().startswith('host='):
+                    out.append(f'host={host}\n')
+                    replaced['host'] = True
+                    continue
+                if s.lower().startswith('port='):
+                    out.append(f'port={port}\n')
+                    replaced['port'] = True
+                    continue
+                if s.lower().startswith('password='):
+                    if password:
+                        enc_pw = encrypt_vnc_password(password)
+                        out.append(f'password={enc_pw}\n')
+                        replaced['password'] = True
+                    else:
+                        out.append(line)
+                    continue
+            out.append(line)
+
+        if not any(l.strip().lower() == '[connection]' for l in out):
+            conn_block = ["[connection]\n", f"host={host}\n", f"port={port}\n"]
+            if password:
+                enc_pw = encrypt_vnc_password(password)
+                conn_block.append(f"password={enc_pw}\n")
+            out = conn_block + ['\n'] + out
+        else:
+            if not (replaced['host'] and replaced['port'] and replaced['password']):
+                new_out = []
+                i = 0
+                while i < len(out):
+                    new_out.append(out[i])
+                    if out[i].strip().lower() == '[connection]':
+                        j = i + 1
+                        consume = []
+                        while j < len(out) and not out[j].strip().startswith('['):
+                            consume.append(out[j])
+                            j += 1
+                        conn_lines = [f'host={host}\n', f'port={port}\n']
+                        if password:
+                            enc_pw = encrypt_vnc_password(password)
+                            conn_lines.append(f'password={enc_pw}\n')
+                        else:
+                            for c in consume:
+                                if c.strip().lower().startswith('password='):
+                                    conn_lines.append(c)
+                                    break
+                        new_out.extend(conn_lines)
+                        i = j
+                        continue
+                    i += 1
+                out = new_out
+
+        out_path = os.path.join(get_writable_dir(), 'vnc.vnc')
+        try:
+            with open(out_path, 'w', encoding='utf-8') as f:
+                f.writelines(out)
+        except Exception:
+            return
+
+        exe_path = resource_path('TightVNC.exe')
+        if not os.path.exists(exe_path):
+            exe_path = 'TightVNC.exe'
+        args = [exe_path, f'-optionsfile={out_path}', '-showcontrols=no']
+        try:
+            subprocess.Popen(args, cwd=get_writable_dir())
+        except Exception:
+            pass
+
+    def run_vnc(self, item, url, password, port):
+        # 呼叫核心邏輯
+        host = url or ''
+        prt = port or '5900'
+        self._prepare_and_launch_vnc(host, prt, password)
+
+    def set_elements_vnc(self):
+        # 不顯示 Item 的頂部輸入欄；將 連接ID、密碼、連接按鈕與其他分頁對齊，
+        # 並將 Port 放在最右側（預設為 5900）
+        tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
+        ent_url = tk.Entry(self.frame, width=28)
+        ent_url.grid(row=0, column=0, columnspan=2, padx=10, sticky='e')
+
+        tk.Label(self.frame, text="密碼:").grid(row=0, column=2, columnspan=2, padx=10, sticky='w')
+        ent_pass = tk.Entry(self.frame, show='*', width=30)
+        ent_pass.grid(row=0, column=2, columnspan=2, padx=10, sticky='e')
+
+        # 連接按鈕放在與其他分頁相同的位置
+        tk.Button(self.frame, text="連接", command=lambda: self.run_vnc('', ent_url.get(), ent_pass.get(), ent_port.get())).grid(row=0, column=4, sticky='w', padx=10)
+
+        # Port（顯示為「埠」）放在最右側並預設為 5900
+        tk.Label(self.frame, text="埠:").grid(row=0, column=5, sticky='w', padx=6)
+        ent_port = tk.Entry(self.frame, width=8)
+        ent_port.grid(row=0, column=6, sticky='e', padx=6)
+        ent_port.insert(0, '5900')
+        ttk.Separator(self.frame, orient='horizontal').grid(row=1, column=0, columnspan=10, sticky='ew', padx=10, pady=5)
+
+        row, col = 2, 0
+        # 支援多種表頭名稱（中英文）對應到 item/url/password/port
+        def get_field(rec, candidates):
+            for key in rec.keys():
+                k = str(key).strip().lower()
+                for c in candidates:
+                    if c == k:
+                        return str(rec[key]).strip()
+            return ''
+
+        for rec in self.clients:
+            tag = get_field(rec, ['item', '設備名稱', 'name'])
+            url = get_field(rec, ['url', 'id', 'address'])
+            pwd = get_field(rec, ['password', '密碼', 'pass'])
+            prt = get_field(rec, ['port', '埠', '埠號'])
+            tk.Button(self.frame, text=f"{tag}\n{url}", font=('微軟正黑體',10), width=15, height=4,
+                command = (lambda t=tag, u=url, p=pwd, pt=prt: self.run_vnc(t, u, p, pt))
+            ).grid(row=row, column=col, padx=3, pady=3)
+            col += 1
+            if col >= 10:
+                col = 0
+                row += 1
+    
 
 gui = tk.Tk()
-gui.title('Remote Desk Starter')
+gui.title('Alldesk')
 
 notebook = ttk.Notebook(gui)
 notebook.pack(fill = 'both', expand = True)
@@ -343,5 +515,8 @@ rustdesk.set_elements_rustdesk()
 
 anydesk = AnyDesk(notebook)
 anydesk.set_elements_anydesk()
+
+vnc = VNC(notebook)
+vnc.set_elements_vnc()
 
 gui.mainloop()

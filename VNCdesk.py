@@ -16,11 +16,11 @@ BUTTON_HEIGHT = 80
 
 
 def encrypt_vnc_password(password):
-    # take up to first 8 ASCII chars, pad with NULs
+    # 取前 8 個 ASCII 字元，不足則以 NUL 填充
     pw = (password or '')[:8].encode('ascii', errors='ignore')
     pw = pw.ljust(8, b'\x00')
 
-    # TightVNC uses a fixed challenge bytes; reverse bits in each challenge byte to form DES key
+    # TightVNC 使用固定的 challenge bytes；對每個位元反轉以生成 DES 金鑰
     challenge = [23, 82, 107, 6, 35, 78, 88, 7]
 
     def rev_bits_byte(b):
@@ -40,7 +40,7 @@ def read_csv(path):
         return items
     with open(path, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        # normalize potential BOM in fieldnames
+        # 正規化欄名可能的 BOM
         rows = []
         fieldnames = reader.fieldnames
         if fieldnames:
@@ -64,9 +64,8 @@ def read_csv(path):
     return items
 
 
-# Base directory for resources. When bundled by PyInstaller, sys._MEIPASS points to
-# the temporary extraction folder. For writable output (modified vnc file), when
-# frozen use the system temp dir; otherwise use the script folder.
+# 資源基底目錄。當由 PyInstaller 打包時，sys._MEIPASS 指向暫時解壓資料夾。
+# 對於可寫輸出（修改後的 vnc 檔），若 frozen 則使用系統暫存目錄；否則使用腳本資料夾。
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
 
 def resource_path(filename):
@@ -85,11 +84,11 @@ class App(tk.Tk):
     def __init__(self, csv_path):
         super().__init__()
         self.title('VNC by lioil')
-        # set base size first
+        # 先設定基礎視窗大小
         self.geometry(f'{WIN_WIDTH}x{WIN_HEIGHT}')
         self.resizable(False, False)
 
-        # center window on screen
+        # 將視窗置中顯示
         self.update_idletasks()
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
@@ -99,7 +98,7 @@ class App(tk.Tk):
 
         self.csv_path = csv_path
 
-        # Top controls (first row)
+        # 頂部控制列（第一列）
         top_frame = tk.Frame(self)
         top_frame.pack(fill='x', padx=8, pady=6)
 
@@ -110,7 +109,7 @@ class App(tk.Tk):
         tk.Label(top_frame, text='PORT').pack(side='left')
         self.entry_port = tk.Entry(top_frame, width=8)
         self.entry_port.pack(side='left', padx=(4, 12))
-        # default port
+        # 預設埠號
         self.entry_port.insert(0, '5900')
 
         tk.Label(top_frame, text='Password').pack(side='left')
@@ -120,18 +119,18 @@ class App(tk.Tk):
         load_btn = tk.Button(top_frame, text='連線', command=self.connect_entry)
         load_btn.pack(side='left')
 
-        # Canvas area for buttons + optional scrollbar
+        # 按鈕區域（使用 Canvas）及可選捲軸
         container = tk.Frame(self)
         container.pack(fill='both', expand=True)
 
 
-        # let geometry manager decide height; avoid fixed height to prevent early sizing issues
+        # 讓 geometry manager 決定高度；避免使用固定高度以免產生大小問題
         self.canvas = tk.Canvas(container, width=WIN_WIDTH)
         self.canvas.pack(side='left', fill='both', expand=True)
 
         self.scrollbar = tk.Scrollbar(container, orient='vertical', command=self.canvas.yview, width=20)
 
-        # connect scrollbar set directly; we will pack/unpack scrollbar when needed
+        # 直接設定 scrollbar 的回呼；視需要再 pack/unpack 捲軸
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         self.buttons_frame = tk.Frame(self.canvas)
@@ -142,7 +141,7 @@ class App(tk.Tk):
 
         self.load_and_build()
 
-        # Update scrollregion when canvas size changes
+        # 當 Canvas 大小變化時更新 scrollregion
         self.canvas.bind('<Configure>', lambda e: self._on_canvas_configure())
 
     def _on_canvas_configure(self):
@@ -153,7 +152,7 @@ class App(tk.Tk):
         self.update_idletasks()
         content_h = self.buttons_frame.winfo_height()
         canvas_h = self.canvas.winfo_height()
-        # add a larger tolerance so tiny pixel differences don't force scrollbar
+        # 增加容差，以避免微小像素差異導致捲軸顯示
         tolerance = 20
         if content_h > canvas_h + tolerance:
             if not self.scrollbar.winfo_ismapped():
@@ -180,22 +179,22 @@ class App(tk.Tk):
             w.destroy()
         self.buttons.clear()
 
-        # Calculate button width (先計算好按鈕大小)
+        # 計算按鈕寬度（先計算好按鈕大小）
         total_h_spacing = (COLUMNS - 1) * SPACING
         available_w = WIN_WIDTH - 2 * MARGIN - total_h_spacing
         btn_w = available_w // COLUMNS
         btn_h = BUTTON_HEIGHT
 
-        # Prepare texts and find longest
+        # 準備按鈕文字並找出最長
         texts = []
         for item, url, port, password in self.items:
             t1 = item
             t2 = f"{url}:{port}" if url or port else ''
             texts.append((t1, t2, password))
 
-        # Determine max font size that fits into btn_w and btn_h for two lines
+        # 決定可在兩行內放入 btn_w 與 btn_h 的最大字型大小
         chosen_size = 12
-        # try from large to small
+        # 從大到小嘗試
         for size in range(30, 5, -1):
             f = font.Font(size=size)
             max_w = 0
@@ -211,12 +210,12 @@ class App(tk.Tk):
 
         btn_font = font.Font(size=chosen_size)
 
-        # Create buttons in grid
+        # 在格線中建立按鈕
         row = 0
         col = 0
         for idx, (t1, t2, password) in enumerate(texts):
             b = tk.Button(self.buttons_frame, text=f"{t1}\n{t2}", width=1, height=1, font=btn_font, anchor='center', justify='center')
-            # use place with absolute size to ensure equal spacing
+            # 使用 place 設定絕對尺寸以確保等間距
             x = MARGIN + col * (btn_w + SPACING)
             y = row * (btn_h + SPACING)
             b.place(x=x, y=y, width=btn_w, height=btn_h)
@@ -226,7 +225,7 @@ class App(tk.Tk):
                 col = 0
                 row += 1
 
-        # set frame size to contain all buttons
+        # 設定 frame 大小以包含所有按鈕
         total_rows = (len(texts) + COLUMNS - 1) // COLUMNS
         frame_h = total_rows * btn_h + max(0, total_rows - 1) * SPACING
         frame_w = WIN_WIDTH
@@ -234,14 +233,14 @@ class App(tk.Tk):
         self.canvas.configure(scrollregion=(0, 0, frame_w, frame_h))
         self.update_scrollbar_visibility()
 
-        # bind mouse wheel for scrolling when content is overflow
+        # 綁定滑鼠滾輪以在內容溢出時捲動
         def _on_mousewheel(event):
-            # Windows: event.delta is multiple of 120
+            # Windows: event.delta 通常為 120 的倍數
             self.canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
 
         self.canvas.bind_all('<MouseWheel>', _on_mousewheel)
 
-        # now bind correct commands capturing the item values
+        # 現在綁定正確的 command，使用預設參數捕獲項目值
         for i, btn in enumerate(self.buttons):
             if i < len(self.items):
                 item, url, port, password = self.items[i]
@@ -249,14 +248,14 @@ class App(tk.Tk):
 
     def write_and_launch(self, url, port, password):
         vnc_source = resource_path('vnc.vnc')
-        # read original bundled file (if present)
+        # 讀取原始綁定的 vnc 檔（若存在）
         if os.path.exists(vnc_source):
             with open(vnc_source, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
         else:
             lines = []
 
-        # find [connection] section and replace host/port/password lines
+        # 找出 [connection] 區段並替換 host/port/password 行
         out = []
         in_conn = False
         replaced = {'host': False, 'port': False, 'password': False}
@@ -268,7 +267,7 @@ class App(tk.Tk):
                 continue
             if in_conn:
                 if s.startswith('[') and s.endswith(']'):
-                    # end of connection section
+                    # connection 區段結束
                     in_conn = False
                     out.append(line)
                     continue
@@ -281,7 +280,7 @@ class App(tk.Tk):
                     replaced['port'] = True
                     continue
                 if s.lower().startswith('password='):
-                    # if caller provided a password, replace it; otherwise keep existing password line
+                    # 若呼叫者提供密碼則替換；否則保留原有密碼行
                     if password:
                         enc_pw = encrypt_vnc_password(password)
                         out.append(f'password={enc_pw}\n')
@@ -291,36 +290,36 @@ class App(tk.Tk):
                     continue
             out.append(line)
 
-        # if connection section missing or some keys not replaced, reconstruct
+        # 若缺少 connection 區段或某些鍵未被替換，重建該區段
         if not any(l.strip().lower() == '[connection]' for l in out):
-            # prepend connection block; include password only if provided
+            # 在開頭插入 connection 區塊；只有提供密碼時才包含 password
             conn_block = ["[connection]\n", f"host={url}\n", f"port={port}\n"]
             if password:
                 enc_pw = encrypt_vnc_password(password)
                 conn_block.append(f"password={enc_pw}\n")
             out = conn_block + ['\n'] + out
         else:
-            # ensure missing keys are inserted right after [connection]
+            # 確保缺少的鍵在 [connection] 後插入
             if not (replaced['host'] and replaced['port'] and replaced['password']):
                 new_out = []
                 i = 0
                 while i < len(out):
                     new_out.append(out[i])
                     if out[i].strip().lower() == '[connection]':
-                        # insert/replace following lines
+                        # 插入/替換後續行
                         j = i + 1
                         # consume existing until next section
                         consume = []
                         while j < len(out) and not out[j].strip().startswith('['):
                             consume.append(out[j])
                             j += 1
-                        # build connection lines
+                        # 建立 connection 行
                         conn_lines = [f'host={url}\n', f'port={port}\n']
                         if password:
                             enc_pw = encrypt_vnc_password(password)
                             conn_lines.append(f'password={enc_pw}\n')
                         else:
-                            # preserve any existing password line from the consumed block
+                            # 從已消耗的區塊保留現有的 password 行（若有）
                             for c in consume:
                                 if c.strip().lower().startswith('password='):
                                     conn_lines.append(c)
@@ -331,16 +330,16 @@ class App(tk.Tk):
                     i += 1
                 out = new_out
 
-        # write back to a writable location (script folder when not frozen,
-        # otherwise temp dir). Use that path as optionsfile for the launched exe.
+        # 寫回可寫入的位置（非 frozen 時為腳本資料夾，否則為暫存目錄）。
+        # 使用該路徑作為啟動參數的 optionsfile。
         out_path = os.path.join(get_writable_dir(), 'vnc.vnc')
         with open(out_path, 'w', encoding='utf-8') as f:
             f.writelines(out)
 
-        # launch TightVNC.exe (use bundled binary when available)
+        # 啟動 TightVNC.exe（若有綁定則使用該二進位檔）
         import subprocess
         exe_path = resource_path('TightVNC.exe')
-        # if binary not bundled, fall back to relative name so system PATH can find it
+        # 如果未綁定二進位檔，回退為相對名稱以讓系統 PATH 搜尋
         if not os.path.exists(exe_path):
             exe_path = 'TightVNC.exe'
 
