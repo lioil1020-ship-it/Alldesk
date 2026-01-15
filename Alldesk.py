@@ -445,7 +445,7 @@ class VNC():
                     while i < len(lines):
                         if lines[i].strip().lower() == '[options]':
                             has_options = True
-                            # collect until next section
+                            # 收集直到下一個區段
                             j = i + 1
                             opts = {}
                             while j < len(lines) and not lines[j].strip().startswith('['):
@@ -454,20 +454,20 @@ class VNC():
                                     k, v = s.split('=', 1)
                                     opts[k.strip().lower()] = v.strip()
                                 j += 1
-                            # enforce keys
+                            # 強制指定必要的鍵值
                             opts['viewonly'] = '0'
                             opts['shared'] = '1'
                             opts['swapmouse'] = opts.get('swapmouse', '0')
-                            # rebuild block
+                            # 重建 options 區塊
                             new_block = ['[options]\n']
                             for k, v in opts.items():
                                 new_block.append(f'{k}={v}\n')
-                            # replace lines i..j-1
+                            # 取代第 i..j-1 行
                             lines[i:j] = new_block
                             break
                         i += 1
                     if not has_options:
-                        # append options after connection
+                        # 在 connection 後附加 options 區塊
                         opts_block = ['[options]\n', 'viewonly=0\n', 'shared=1\n', 'swapmouse=0\n', '\n']
                         lines.extend(opts_block)
                     return lines
@@ -498,7 +498,7 @@ class VNC():
 
     def set_elements_vnc(self):
         # 不顯示 Item 的頂部輸入欄；將 連接ID、密碼、連接按鈕與其他分頁對齊，
-        # 並將 Port 放在最右側（預設為 5900）
+        # 並將埠放在最右側（預設為 5900）
         tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
         ent_url = tk.Entry(self.frame, width=28)
         ent_url.grid(row=0, column=0, columnspan=2, padx=10, sticky='e')
@@ -510,7 +510,7 @@ class VNC():
         # 連接按鈕放在與其他分頁相同的位置
         tk.Button(self.frame, text="連接", command=lambda: self.run_vnc('', ent_url.get(), ent_pass.get(), ent_port.get())).grid(row=0, column=4, sticky='w', padx=10)
 
-        # Port（顯示為「埠」）放在最右側並預設為 5900
+        # 埠 放在最右側並預設為 5900
         tk.Label(self.frame, text="埠:").grid(row=0, column=5, sticky='w', padx=6)
         ent_port = tk.Entry(self.frame, width=8)
         ent_port.grid(row=0, column=6, sticky='e', padx=6)
@@ -518,7 +518,7 @@ class VNC():
         ttk.Separator(self.frame, orient='horizontal').grid(row=1, column=0, columnspan=10, sticky='ew', padx=10, pady=5)
 
         row, col = 2, 0
-        # 支援多種表頭名稱（中英文）對應到 item/url/password/port
+        # 支援多種表頭名稱（中/英）對應到 item / url / password / 埠
         def get_field(rec, candidates):
             for key in rec.keys():
                 k = str(key).strip().lower()
