@@ -48,8 +48,17 @@ class RustDesk():
         clients = []
         if excel_path.exists():
             try:
-                df = pd.read_excel(excel_path, sheet_name='rustdesk', engine='openpyxl')
-                clients = df.astype(str).fillna('').values.tolist()
+                try:
+                    df = pd.read_excel(excel_path, sheet_name='rustdesk', engine='openpyxl')
+                except Exception:
+                    # 若找不到命名 sheet，回退到第 0 張
+                    df = pd.read_excel(excel_path, sheet_name=0, engine='openpyxl')
+                rows = df.astype(str).fillna('').values.tolist()
+                # 只取前三欄 (tag, id, password)，若不足則以空字串補齊
+                clients = [
+                    (row[0] if len(row) > 0 else '', row[1] if len(row) > 1 else '', row[2] if len(row) > 2 else '')
+                    for row in rows
+                ]
             except Exception:
                 clients = []
         else:
@@ -238,7 +247,19 @@ class RustDesk():
 
         row, col = 2, 0
         for client in self.clients:
-            tag, client_id, password = client
+            # client 可能是長度不一的 tuple/list，安全取值
+            try:
+                tag = client[0]
+            except Exception:
+                tag = ''
+            try:
+                client_id = client[1]
+            except Exception:
+                client_id = ''
+            try:
+                password = client[2]
+            except Exception:
+                password = ''
             tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
                 command = lambda cid = client_id, pwd = password: self.run_rustdesk(cid, pwd)
             ).grid(row=row, column=col, padx=3, pady=3)
@@ -264,8 +285,16 @@ class AnyDesk():
         clients = []
         if excel_path.exists():
             try:
-                df = pd.read_excel(excel_path, sheet_name='anydesk', engine='openpyxl')
-                clients = df.astype(str).fillna('').values.tolist()
+                try:
+                    df = pd.read_excel(excel_path, sheet_name='anydesk', engine='openpyxl')
+                except Exception:
+                    # 若找不到命名 sheet，回退到第 1 張
+                    df = pd.read_excel(excel_path, sheet_name=1, engine='openpyxl')
+                rows = df.astype(str).fillna('').values.tolist()
+                clients = [
+                    (row[0] if len(row) > 0 else '', row[1] if len(row) > 1 else '', row[2] if len(row) > 2 else '')
+                    for row in rows
+                ]
             except Exception:
                 clients = []
         else:
@@ -328,7 +357,18 @@ class AnyDesk():
 
         row, col = 2, 0
         for client in self.clients:
-            tag, client_id, password = client
+                try:
+                    tag = client[0]
+                except Exception:
+                    tag = ''
+                try:
+                    client_id = client[1]
+                except Exception:
+                    client_id = ''
+                try:
+                    password = client[2]
+                except Exception:
+                    password = ''
             tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
                 command = lambda cid = client_id, pwd = password: self.run_anydesk(cid, pwd)
             ).grid(row=row, column=col, padx=3, pady=3)
