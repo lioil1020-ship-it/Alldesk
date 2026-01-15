@@ -3,6 +3,7 @@ import shutil, subprocess, threading
 import os, stat, glob, platform
 import pandas as pd
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 from VNCdesk import encrypt_vnc_password, resource_path, get_writable_dir
 
@@ -437,6 +438,42 @@ class VNC():
                     i += 1
                 out = new_out
 
+                # 確保 [options] 區段存在，且強制設定允許遠端控制（非唯讀）
+                def ensure_options(lines):
+                    has_options = False
+                    i = 0
+                    while i < len(lines):
+                        if lines[i].strip().lower() == '[options]':
+                            has_options = True
+                            # collect until next section
+                            j = i + 1
+                            opts = {}
+                            while j < len(lines) and not lines[j].strip().startswith('['):
+                                s = lines[j].strip()
+                                if '=' in s:
+                                    k, v = s.split('=', 1)
+                                    opts[k.strip().lower()] = v.strip()
+                                j += 1
+                            # enforce keys
+                            opts['viewonly'] = '0'
+                            opts['shared'] = '1'
+                            opts['swapmouse'] = opts.get('swapmouse', '0')
+                            # rebuild block
+                            new_block = ['[options]\n']
+                            for k, v in opts.items():
+                                new_block.append(f'{k}={v}\n')
+                            # replace lines i..j-1
+                            lines[i:j] = new_block
+                            break
+                        i += 1
+                    if not has_options:
+                        # append options after connection
+                        opts_block = ['[options]\n', 'viewonly=0\n', 'shared=1\n', 'swapmouse=0\n', '\n']
+                        lines.extend(opts_block)
+                    return lines
+
+                out = ensure_options(out)
+
         out_path = os.path.join(get_writable_dir(), 'vnc.vnc')
         try:
             with open(out_path, 'w', encoding='utf-8') as f:
@@ -507,7 +544,11 @@ class VNC():
 gui = tk.Tk()
 gui.title('Alldesk')
 
-notebook = ttk.Notebook(gui)
+# 調整 Notebook 標籤字型：加大並改為粗體以便與 UI 一致
+style = ttk.Style()
+tab_font = tkfont.Font(family='微軟正黑體', size=11, weight='bold')
+style.configure('Big.TNotebook.Tab', font=tab_font, padding=[12, 6])
+notebook = ttk.Notebook(gui, style='Big.TNotebook')
 notebook.pack(fill = 'both', expand = True)
 
 rustdesk = RustDesk(notebook)

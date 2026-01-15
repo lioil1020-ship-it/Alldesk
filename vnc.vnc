@@ -1,7 +1,7 @@
 [connection]
-host=lioil.ddnsfree.com
+host=192.168.2.6
 port=5900
-password=13a56bc35b644c61
+password=1b885979940e8401
 [options]
 use_encoding_1=1
 copyrect=1
