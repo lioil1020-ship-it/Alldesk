@@ -357,19 +357,19 @@ class AnyDesk():
 
         row, col = 2, 0
         for client in self.clients:
-                try:
-                    tag = client[0]
-                except Exception:
-                    tag = ''
-                try:
-                    client_id = client[1]
-                except Exception:
-                    client_id = ''
-                try:
-                    password = client[2]
-                except Exception:
-                    password = ''
-            tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
+            try:
+                tag = client[0]
+            except Exception:
+                tag = ''
+            try:
+                client_id = client[1]
+            except Exception:
+                client_id = ''
+            try:
+                password = client[2]
+            except Exception:
+                password = ''
+            tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4,
                 command = lambda cid = client_id, pwd = password: self.run_anydesk(cid, pwd)
             ).grid(row=row, column=col, padx=3, pady=3)
             col += 1
