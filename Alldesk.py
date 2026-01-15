@@ -1,11 +1,14 @@
 import tkinter as tk
 import shutil, subprocess, threading
-import os, stat, glob, platform
+import os, stat, glob, platform, sys, tempfile
+import winreg
+from Crypto.Cipher import DES
 import pandas as pd
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
-from VNCdesk import encrypt_tightvnc_password, resource_path, get_writable_dir
+from tkinter import messagebox
+# VNC helper functions inlined (from former VNCdesk.py)
 
 """Alldesk GUI 啟動器
 
@@ -20,7 +23,7 @@ client 列表（sheet 名稱分別為 'rustdesk' 與 'anydesk'），並在啟動
 BASE_DIR = Path(__file__).resolve().parent
 EXE_DIR = BASE_DIR / 'exe'
 # rustdesk 可執行檔路徑（相對或絕對）
-RUSTDESK_APP = os.getenv('RUSTDESK_APP', str(EXE_DIR / 'RustDesk.exe'))
+RUSTDESK_APP = os.getenv('RUSTDESK_APP', str(EXE_DIR / 'rustdesk.exe'))
 # 用於產生 RustDesk2.toml 的 rendezvous server 與 key（固定參數）
 RUSTDESK_HOST = 'everdura.ddnsfree.com'
 RUSTDESK_KEY = 'kCC8dq5x8uvEI+fpbIsTpYhCMaMbAxpYmGv6XtR7NsY='
@@ -28,6 +31,152 @@ RUSTDESK_KEY = 'kCC8dq5x8uvEI+fpbIsTpYhCMaMbAxpYmGv6XtR7NsY='
 # AnyDesk / TightVNC 可執行檔路徑
 ANYDESK_APP = os.getenv('ANYDESK_APP', str(EXE_DIR / 'AnyDesk.exe'))
 TIGHTVNC_APP = os.getenv('TIGHTVNC_APP', str(EXE_DIR / 'TightVNC.exe'))
+
+# Base dir for resources when bundled with PyInstaller
+VNC_BASE_DIR = getattr(sys, '_MEIPASS', None) or str(Path(__file__).resolve().parent)
+
+def resource_path(filename: str) -> str:
+    return os.path.join(VNC_BASE_DIR, filename)
+
+
+def get_app_path(filename: str) -> str:
+    """回傳應用程式相對的檔案路徑：
+    - 若為 PyInstaller onefile/frozen，使用可執行檔所在資料夾 (sys.executable)
+    - 否則使用原始 `BASE_DIR`（原始原始碼所在資料夾）
+    """
+    try:
+        if getattr(sys, 'frozen', False):
+            return os.path.join(os.path.dirname(sys.executable), filename)
+    except Exception:
+        pass
+    return os.path.join(str(BASE_DIR), filename)
+
+
+def _find_excel_exe() -> str | None:
+    """嘗試從登錄檢索 excel.exe 的路徑，找不到則回傳 None。"""
+    try:
+        # 優先查詢 HKLM / HKCU App Paths
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                key = winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\excel.exe")
+                try:
+                    exe_path, _ = winreg.QueryValueEx(key, None)
+                    if exe_path:
+                        return exe_path
+                finally:
+                    winreg.CloseKey(key)
+            except FileNotFoundError:
+                # 嘗試 WOW6432Node
+                try:
+                    key = winreg.OpenKey(hive, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\excel.exe")
+                    try:
+                        exe_path, _ = winreg.QueryValueEx(key, None)
+                        if exe_path:
+                            return exe_path
+                    finally:
+                        winreg.CloseKey(key)
+                except FileNotFoundError:
+                    continue
+        # 再試 HKEY_CLASSES_ROOT 的 ProgID
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"Excel.Application\CurVer")
+            winreg.CloseKey(key)
+            # 若存在就回傳 None 表示安裝，但沒有取得路徑
+            return None
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+
+def open_alldesk_excel(sheet_idx: int | None = None):
+    """開啟 `Alldesk.xlsx`，若系統可用 COM automation，則嘗試選取指定工作表。
+
+    參數:
+    - sheet_idx: 1-based 的工作表索引，若為 None 則不指定。
+    """
+    xlsx = get_app_path('Alldesk.xlsx')
+    if not os.path.exists(xlsx):
+        messagebox.showwarning('找不到檔案', '找不到 Alldesk.xlsx')
+        return
+
+    # 先嘗試使用 winreg 取得 excel.exe 路徑（純啟動用途的 fallback）
+    exe_path = _find_excel_exe()
+
+    # 優先使用 COM automation 控制 Excel（若可用），以便能選擇工作表
+    try:
+        import win32com.client
+        try:
+            excel = win32com.client.GetActiveObject('Excel.Application')
+        except Exception:
+            excel = win32com.client.Dispatch('Excel.Application')
+        excel.Visible = True
+
+        # 檢查檔案是否已開啟
+        wb = None
+        try:
+            for w in excel.Workbooks:
+                try:
+                    if os.path.normcase(w.FullName) == os.path.normcase(xlsx):
+                        wb = w
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        if wb is None:
+            wb = excel.Workbooks.Open(xlsx)
+
+        if sheet_idx:
+            try:
+                # win32com 支援 Worksheets(1-based)
+                ws = wb.Worksheets(sheet_idx)
+                ws.Activate()
+            except Exception:
+                pass
+        return
+    except Exception:
+        # 若無法使用 COM（例如未安裝 pywin32），退回至啟動檔案或使用 excel.exe
+        pass
+
+    # 若有可執行檔路徑就用它開啟，否則用系統預設關聯
+    if exe_path:
+        try:
+            subprocess.Popen([exe_path, xlsx])
+            return
+        except Exception:
+            pass
+
+    try:
+        os.startfile(xlsx)
+    except Exception:
+        messagebox.showwarning('未安裝 Excel', '此電腦未偵測到 Microsoft Excel，無法以 Excel 開啟 Alldesk.xlsx')
+
+
+def get_writable_dir() -> str:
+    if getattr(sys, 'frozen', False):
+        return tempfile.gettempdir()
+    return os.path.dirname(__file__)
+
+
+def encrypt_tightvnc_password(password: str) -> str:
+    # take up to first 8 ASCII chars, pad with NULs
+    pw = (password or '')[:8].encode('ascii', errors='ignore')
+    pw = pw.ljust(8, b'\x00')
+
+    # TightVNC uses a fixed challenge bytes; reverse bits in each challenge byte to form DES key
+    challenge = [23, 82, 107, 6, 35, 78, 88, 7]
+
+    def rev_bits_byte(b):
+        b = ((b & 0xF0) >> 4) | ((b & 0x0F) << 4)
+        b = ((b & 0xCC) >> 2) | ((b & 0x33) << 2)
+        b = ((b & 0xAA) >> 1) | ((b & 0x55) << 1)
+        return b
+
+    key = bytes([rev_bits_byte(b) for b in challenge])
+    cipher = DES.new(key, DES.MODE_ECB)
+    return cipher.encrypt(pw).hex()
 
 class RustDesk():
     """RustDesk 分頁：從 Excel 載入 client 並發起 RustDesk 連線。
@@ -43,7 +192,7 @@ class RustDesk():
     def init_rustdesk(self, notebook: ttk.Notebook):
         app = RUSTDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表；若不存在則不載入 client（僅支援 Excel）
-        excel_path = Path('./Alldesk.xlsx')
+        excel_path = Path(get_app_path('Alldesk.xlsx'))
         # 使用模組級常數 `RUSTDESK_HOST` / `RUSTDESK_KEY`，不在物件上存放副本
         clients = []
         if excel_path.exists():
@@ -101,7 +250,7 @@ class RustDesk():
             pass
 
         # 嘗試從 Alldesk.xlsx 第1張工作表讀取第一列的 ID/密碼（優先），若無則使用傳入的 client_id/password
-        excel_path = Path('./Alldesk.xlsx')
+        excel_path = Path(get_app_path('Alldesk.xlsx'))
         if excel_path.exists():
             try:
                 df0 = pd.read_excel(excel_path, sheet_name=0, engine='openpyxl').astype(str).fillna('')
@@ -124,18 +273,30 @@ class RustDesk():
                         pwd_idx = id_idx + 1 if df0.shape[1] > id_idx + 1 else id_idx
                     sheet_id = str(df0.iat[0, id_idx]).strip()
                     sheet_pwd = str(df0.iat[0, pwd_idx]).strip()
-                    if sheet_id:
+                    # 只有在傳入的 client_id / password 為空時，才使用 Excel 第1張的預設值
+                    try:
+                        client_id_empty = not client_id or str(client_id).strip() == ''
+                    except Exception:
+                        client_id_empty = True
+                    try:
+                        password_empty = not password or str(password).strip() == ''
+                    except Exception:
+                        password_empty = True
+                    if client_id_empty and sheet_id:
                         client_id = sheet_id
-                    if sheet_pwd:
+                    if password_empty and sheet_pwd:
                         password = sheet_pwd
             except Exception:
                 pass
 
         peer_file = os.path.join(peers_dir, f"{client_id}.toml")
-        # 若檔案存在，確保可寫（移除唯讀屬性）
+        # 若檔案存在，確保可寫（移除唯讀屬性，使用 windows attrib -r 更可靠）
         try:
             if os.path.exists(peer_file):
-                os.chmod(peer_file, stat.S_IWRITE)
+                try:
+                    subprocess.run(['attrib', '-r', peer_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    os.chmod(peer_file, stat.S_IWRITE)
         except Exception:
             pass
 
@@ -181,15 +342,21 @@ class RustDesk():
             "i444 = ''\n"
             "custom-fps = '30'\n\n"
             "[ui_flutter]\n"
-            "wm_RemoteDesktop = '{" + '"width":1300.0,"height":740.0,"offsetWidth":1270.0,"offsetHeight":710.0,"isMaximized":true,"isFullscreen":true' + "}'\n\n"
+            "wm_RemoteDesktop = '{" + '"width":1300.0,"height":740.0,"offsetWidth":1270.0,"offsetHeight":710.0,"isMaximized":true,"isFullscreen":false' + "}'\n\n"
             "[info]\n"
             f"username = '{uname}'\n"
             f"hostname = '{host}'\n"
             "platform = 'Windows'\n"
         )
         try:
+            # 使用原生文字模式寫入（預設會在 Windows 翻譯為 CRLF）並確保 flush+fsync
             with open(peer_file, 'w', encoding='utf-8') as fw:
                 fw.write(peer_content)
+                try:
+                    fw.flush()
+                    os.fsync(fw.fileno())
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -207,6 +374,11 @@ class RustDesk():
                 fw.write(f"key = '{key}'\n")
                 fw.write(f"[peer_settings.{client_id}]\n")
                 fw.write(f"password = '{password}'\n")
+                try:
+                    fw.flush()
+                    os.fsync(fw.fileno())
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -220,12 +392,21 @@ class RustDesk():
         2. 以參數列表方式啟動 `rustdesk.exe --connect <id> --password <pwd>`。
         """
         exec_target = self.exec_target
-        command = [exec_target, '--connect', client_id, '--password', password]
+        cmd = [exec_target, '--connect', client_id, '--password', password]
         # 在啟動 RustDesk 前，先寫入 RustDesk2.toml 以設定 view_style
         self._prepare_rustdesk_conf(client_id, password)
-        # 呼叫可執行檔（使用參數列表較安全）
-        subprocess.run(command)
-        # 可改為非同步啟動：subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW)
+        # 以非同步方式啟動 RustDesk，模擬 batch 的 `start` 行為（立即返回）
+        exe_dir = os.path.dirname(exec_target) or None
+        try:
+            subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=exe_dir)
+        except Exception:
+            try:
+                subprocess.Popen(cmd, cwd=exe_dir)
+            except Exception:
+                try:
+                    subprocess.Popen(cmd)
+                except Exception:
+                    pass
 
 
     def set_elements_rustdesk(self):
@@ -281,7 +462,7 @@ class AnyDesk():
     def init_anydesk(self, notebook: ttk.Notebook):
         app: str = ANYDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表；若不存在則不載入 client（僅支援 Excel）
-        excel_path = Path('./Alldesk.xlsx')
+        excel_path = Path(get_app_path('Alldesk.xlsx'))
         clients = []
         if excel_path.exists():
             try:
@@ -518,7 +699,12 @@ class TightVNC():
 
                 out = ensure_options(out)
 
-        out_path = os.path.join(get_writable_dir(), 'vnc.vnc')
+        # 將輸出改為專案內的 ./exe 資料夾（相對路徑），並確保該資料夾存在
+        try:
+            Path(EXE_DIR).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        out_path = os.path.join(str(EXE_DIR), 'vnc.vnc')
         try:
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.writelines(out)
@@ -594,8 +780,12 @@ gui.title('Alldesk')
 style = ttk.Style()
 tab_font = tkfont.Font(family='微軟正黑體', size=11, weight='bold')
 style.configure('Big.TNotebook.Tab', font=tab_font, padding=[12, 6])
-notebook = ttk.Notebook(gui, style='Big.TNotebook')
-notebook.pack(fill = 'both', expand = True)
+
+# 使用一個容器，將 `Notebook` 放左邊，右邊放一個 `EXCEL` 按鈕
+container = ttk.Frame(gui)
+container.pack(fill='both', expand=True)
+notebook = ttk.Notebook(container, style='Big.TNotebook')
+notebook.pack(side='left', fill='both', expand=True)
 
 rustdesk = RustDesk(notebook)
 rustdesk.set_elements_rustdesk()
@@ -605,5 +795,59 @@ anydesk.set_elements_anydesk()
 
 tightvnc = TightVNC(notebook)
 tightvnc.set_elements_tightvnc()
+
+# 新增一個與其他分頁相同風格的 `EXCEL` 分頁（放在最右側）
+excel_frame = ttk.Frame(notebook)
+notebook.add(excel_frame, text='EXCEL')
+
+# 追蹤上一個選取的 tab id，點選 EXCEL 分頁時開啟檔案並還原為上一分頁
+_last_tab = {'id': notebook.select()}
+
+def _on_tab_changed(event):
+    sel = event.widget.select()
+    try:
+        txt = event.widget.tab(sel, 'text') or ''
+    except Exception:
+        txt = ''
+    if txt.upper() == 'EXCEL':
+        # 由上一個被選取的 tab 判斷要開啟的 sheet（1-based index）
+        sheet_idx = None
+        try:
+            last_id = _last_tab.get('id')
+            if last_id:
+                last_text = event.widget.tab(last_id, 'text') or ''
+                lt = str(last_text).strip().lower()
+                if 'rust' in lt:
+                    sheet_idx = 1
+                elif 'any' in lt:
+                    sheet_idx = 2
+                elif 'vnc' in lt or 'tight' in lt:
+                    sheet_idx = 3
+        except Exception:
+            sheet_idx = None
+
+        open_alldesk_excel(sheet_idx)
+        try:
+            # 還原到上一個 tab
+            event.widget.select(_last_tab['id'])
+        except Exception:
+            pass
+    else:
+        _last_tab['id'] = sel
+
+notebook.bind('<<NotebookTabChanged>>', _on_tab_changed)
+
+# 將主視窗置中於螢幕
+try:
+    gui.update_idletasks()
+    w = gui.winfo_width() or gui.winfo_reqwidth()
+    h = gui.winfo_height() or gui.winfo_reqheight()
+    sw = gui.winfo_screenwidth()
+    sh = gui.winfo_screenheight()
+    x = max((sw - w) // 2, 0)
+    y = max((sh - h) // 2, 0)
+    gui.geometry(f'+{x}+{y}')
+except Exception:
+    pass
 
 gui.mainloop()
