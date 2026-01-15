@@ -16,14 +16,18 @@ client 列表（sheet 名稱分別為 'rustdesk' 與 'anydesk'），並在啟動
 """
 
 # 預設值（可用環境變數覆寫）
+# 將可執行檔統一放到專案內的 `exe` 資料夾（相對於此檔案），使用環境變數可覆寫
+BASE_DIR = Path(__file__).resolve().parent
+EXE_DIR = BASE_DIR / 'exe'
 # rustdesk 可執行檔路徑（相對或絕對）
-RUSTDESK_APP = os.getenv('RUSTDESK_APP', './rustdesk.exe')
+RUSTDESK_APP = os.getenv('RUSTDESK_APP', str(EXE_DIR / 'RustDesk.exe'))
 # 用於產生 RustDesk2.toml 的 rendezvous server 與 key（固定參數）
 RUSTDESK_HOST = 'everdura.ddnsfree.com'
 RUSTDESK_KEY = 'kCC8dq5x8uvEI+fpbIsTpYhCMaMbAxpYmGv6XtR7NsY='
 
-# AnyDesk 可執行檔路徑
-ANYDESK_APP = os.getenv('ANYDESK_APP', './AnyDesk.exe')
+# AnyDesk / TightVNC 可執行檔路徑
+ANYDESK_APP = os.getenv('ANYDESK_APP', str(EXE_DIR / 'AnyDesk.exe'))
+TIGHTVNC_APP = os.getenv('TIGHTVNC_APP', str(EXE_DIR / 'TightVNC.exe'))
 
 class RustDesk():
     """RustDesk 分頁：從 Excel 載入 client 並發起 RustDesk 連線。
@@ -356,7 +360,7 @@ class VNC():
         else:
             clients = []
 
-        self.exec_target = 'TightVNC.exe'
+        self.exec_target = TIGHTVNC_APP
         self.clients = clients
         self.frame = ttk.Frame(notebook)
         notebook.add(self.frame, text = 'VNC')
@@ -482,6 +486,8 @@ class VNC():
             return
 
         exe_path = resource_path('TightVNC.exe')
+        if not os.path.exists(exe_path):
+            exe_path = TIGHTVNC_APP
         if not os.path.exists(exe_path):
             exe_path = 'TightVNC.exe'
         args = [exe_path, f'-optionsfile={out_path}', '-showcontrols=no']
