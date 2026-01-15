@@ -26,7 +26,7 @@ def get_writable_dir() -> str:
     return os.path.dirname(__file__)
 
 
-def encrypt_vnc_password(password: str) -> str:
+def encrypt_tightvnc_password(password: str) -> str:
     """簡單的 VNC 密碼處理。
 
     注意：原程式會將此結果寫入 `vnc.vnc` 作為 password 欄位內容。若系統需要
@@ -68,7 +68,7 @@ COLUMNS = 6
 BUTTON_HEIGHT = 80
 
 
-def encrypt_vnc_password(password):
+def encrypt_tightvnc_password(password):
     # 取前 8 個 ASCII 字元，不足則以 NUL 填充
     pw = (password or '')[:8].encode('ascii', errors='ignore')
     pw = pw.ljust(8, b'\x00')
@@ -335,7 +335,7 @@ class App(tk.Tk):
                 if s.lower().startswith('password='):
                     # 若呼叫者提供密碼則替換；否則保留原有密碼行
                     if password:
-                        enc_pw = encrypt_vnc_password(password)
+                        enc_pw = encrypt_tightvnc_password(password)
                         out.append(f'password={enc_pw}\n')
                         replaced['password'] = True
                     else:
@@ -348,7 +348,7 @@ class App(tk.Tk):
             # 在開頭插入 connection 區塊；只有提供密碼時才包含 password
             conn_block = ["[connection]\n", f"host={url}\n", f"port={port}\n"]
             if password:
-                enc_pw = encrypt_vnc_password(password)
+                enc_pw = encrypt_tightvnc_password(password)
                 conn_block.append(f"password={enc_pw}\n")
             out = conn_block + ['\n'] + out
         else:
@@ -369,7 +369,7 @@ class App(tk.Tk):
                         # 建立 connection 行
                         conn_lines = [f'host={url}\n', f'port={port}\n']
                         if password:
-                            enc_pw = encrypt_vnc_password(password)
+                            enc_pw = encrypt_tightvnc_password(password)
                             conn_lines.append(f'password={enc_pw}\n')
                         else:
                             # 從已消耗的區塊保留現有的 password 行（若有）

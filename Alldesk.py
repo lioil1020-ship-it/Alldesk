@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
-from VNCdesk import encrypt_vnc_password, resource_path, get_writable_dir
+from VNCdesk import encrypt_tightvnc_password, resource_path, get_writable_dir
 
 """Alldesk GUI 啟動器
 
@@ -441,7 +441,7 @@ class TightVNC():
                     continue
                 if s.lower().startswith('password='):
                     if password:
-                        enc_pw = encrypt_vnc_password(password)
+                        enc_pw = encrypt_tightvnc_password(password)
                         out.append(f'password={enc_pw}\n')
                         replaced['password'] = True
                     else:
@@ -452,7 +452,7 @@ class TightVNC():
         if not any(l.strip().lower() == '[connection]' for l in out):
             conn_block = ["[connection]\n", f"host={host}\n", f"port={port}\n"]
             if password:
-                enc_pw = encrypt_vnc_password(password)
+                enc_pw = encrypt_tightvnc_password(password)
                 conn_block.append(f"password={enc_pw}\n")
             out = conn_block + ['\n'] + out
         else:
@@ -469,7 +469,7 @@ class TightVNC():
                             j += 1
                         conn_lines = [f'host={host}\n', f'port={port}\n']
                         if password:
-                                        enc_pw = encrypt_vnc_password(password)
+                                        enc_pw = encrypt_tightvnc_password(password)
                                         conn_lines.append(f'password={enc_pw}\n')
                         else:
                             for c in consume:
