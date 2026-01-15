@@ -403,7 +403,7 @@ class VNC():
         self.exec_target = TIGHTVNC_APP
         self.clients = clients
         self.frame = ttk.Frame(notebook)
-        notebook.add(self.frame, text = 'VNC')
+        notebook.add(self.frame, text = 'TightVNC')
 
     def _prepare_and_launch_vnc(self, host: str, port: str, password: str):
         # 以 VNCdesk 的資源路徑與工具產生可寫入的 vnc.vnc 並啟動 TightVNC
