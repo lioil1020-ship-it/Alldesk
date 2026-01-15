@@ -377,7 +377,7 @@ class AnyDesk():
                 col = 0
                 row += 1
     
-class VNC():
+class TightVNC():
     """VNC 分頁：從 Alldesk.xlsx 第3張工作表載入項目並啟動 VNC 連線。
 
     欄位對應：
@@ -405,7 +405,7 @@ class VNC():
         self.frame = ttk.Frame(notebook)
         notebook.add(self.frame, text = 'TightVNC')
 
-    def _prepare_and_launch_vnc(self, host: str, port: str, password: str):
+    def _prepare_and_launch_tightvnc(self, host: str, port: str, password: str):
         # 以 VNCdesk 的資源路徑與工具產生可寫入的 vnc.vnc 並啟動 TightVNC
         vnc_source = resource_path('vnc.vnc')
         if os.path.exists(vnc_source):
@@ -469,8 +469,8 @@ class VNC():
                             j += 1
                         conn_lines = [f'host={host}\n', f'port={port}\n']
                         if password:
-                            enc_pw = encrypt_vnc_password(password)
-                            conn_lines.append(f'password={enc_pw}\n')
+                                        enc_pw = encrypt_vnc_password(password)
+                                        conn_lines.append(f'password={enc_pw}\n')
                         else:
                             for c in consume:
                                 if c.strip().lower().startswith('password='):
@@ -536,13 +536,13 @@ class VNC():
         except Exception:
             pass
 
-    def run_vnc(self, item, url, password, port):
+    def run_tightvnc(self, item, url, password, port):
         # 呼叫核心邏輯
         host = url or ''
         prt = port or '5900'
-        self._prepare_and_launch_vnc(host, prt, password)
+        self._prepare_and_launch_tightvnc(host, prt, password)
 
-    def set_elements_vnc(self):
+    def set_elements_tightvnc(self):
         # 不顯示 Item 的頂部輸入欄；將 連接ID、密碼、連接按鈕與其他分頁對齊，
         # 並將埠放在最右側（預設為 5900）
         tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
@@ -554,7 +554,7 @@ class VNC():
         ent_pass.grid(row=0, column=2, columnspan=2, padx=10, sticky='e')
 
         # 連接按鈕放在與其他分頁相同的位置
-        tk.Button(self.frame, text="連接", command=lambda: self.run_vnc('', ent_url.get(), ent_pass.get(), ent_port.get())).grid(row=0, column=4, sticky='w', padx=10)
+        tk.Button(self.frame, text="連接", command=lambda: self.run_tightvnc('', ent_url.get(), ent_pass.get(), ent_port.get())).grid(row=0, column=4, sticky='w', padx=10)
 
         # 埠 放在最右側並預設為 5900
         tk.Label(self.frame, text="埠:").grid(row=0, column=5, sticky='w', padx=6)
@@ -579,7 +579,7 @@ class VNC():
             pwd = get_field(rec, ['password', '密碼', 'pass'])
             prt = get_field(rec, ['port', '埠', '埠號'])
             tk.Button(self.frame, text=f"{tag}\n{url}", font=('微軟正黑體',10), width=15, height=4,
-                command = (lambda t=tag, u=url, p=pwd, pt=prt: self.run_vnc(t, u, p, pt))
+                command = (lambda t=tag, u=url, p=pwd, pt=prt: self.run_tightvnc(t, u, p, pt))
             ).grid(row=row, column=col, padx=3, pady=3)
             col += 1
             if col >= 10:
@@ -603,7 +603,7 @@ rustdesk.set_elements_rustdesk()
 anydesk = AnyDesk(notebook)
 anydesk.set_elements_anydesk()
 
-vnc = VNC(notebook)
-vnc.set_elements_vnc()
+tightvnc = TightVNC(notebook)
+tightvnc.set_elements_tightvnc()
 
 gui.mainloop()
