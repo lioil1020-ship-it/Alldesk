@@ -266,37 +266,6 @@ class DES:
         if isinstance(key, str):
             key = key.encode('latin-1')
         return _DES(key)
-# VNC helper functions inlined (from former VNCdesk.py)
-
-"""Alldesk GUI 啟動器
-
-功能概述：
-- 提供三個分頁：`RustDesk`、`AnyDesk` 與 `TightVNC`，分別對應三種遠端桌面
-    連線方式與設定檔準備流程。
-- 從 `Alldesk.xlsx` 讀取各分頁的客戶端清單（預期工作表名稱分別為
-    'rustdesk'、'anydesk' 與第3張表用於 VNC）。程式以只讀方式讀取 Excel 作
-    為單一資料來源，UI 上的快速連線按鈕與手動輸入皆來自該檔案內容。
-
-各分頁主要行為：
-- RustDesk：在啟動前於 `%APPDATA%\RustDesk\config` 產生或覆寫
-    `RustDesk2.toml` 與 `peers/<id>.toml`，以預載密碼與視窗設定，然後啟動
-    `rustdesk.exe --connect <id> --password <pwd>`。
-- AnyDesk：在啟動前於 `%APPDATA%\AnyDesk\user.conf` 寫入 viewmode，
-    並以命令列（管道）將密碼傳入啟動 AnyDesk。
-- TightVNC：由第3張工作表讀取 host/port/password，生成 `vnc.vnc`
-    選項檔（輸出到專案內 `./exe/vnc.vnc`），若有密碼則以 TightVNC 相容的
-    加密格式轉換（內含簡易 DES 實作），再啟動 TightVNC 並指定該選項檔。
-
-實作細節：
-- 程式包含一個輕量的 DES 實作用於 TightVNC 密碼轉換（僅支援單一 8-byte
-    區塊的 ECB 加密，為相容用途，不建議用於其他加密需求）。
-- 程式會儘量在可用時使用 COM automation 開啟 Excel（以便指定工作表），
-    否則會 fallback 至使用系統關聯或 excel.exe 啟動檔案。
-
-安全/相容性說明：
-- 此工具以提高便利性為主，檔案 I/O 與執行外部程式的作法會盡量處理常見
-    錯誤（例：檔案不存在、唯讀屬性），但使用者應評估在公司環境或生產環境
-    的安全性與授權。"""
 
 # 預設值（可用環境變數覆寫）
 # 將可執行檔統一放到專案內的 `exe` 資料夾（相對於此檔案），使用環境變數可覆寫
@@ -543,13 +512,13 @@ class RustDesk():
         self.init_rustdesk(notebook)
 
     def init_rustdesk(self, notebook: ttk.Notebook):
-                """初始化 RustDesk 分頁：
+        """初始化 RustDesk 分頁：
 
-                - 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表（或第一張表），
-                    解析成 (tag, id, password) 的 client 列表。
-                - 正規化 rustdesk 可執行檔路徑並建立 UI 容器。
-                """
-                app = RUSTDESK_APP
+        - 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表（或第一張表），
+          解析成 (tag, id, password) 的 client 列表。
+        - 正規化 rustdesk 可執行檔路徑並建立 UI 容器。
+        """
+        app = RUSTDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表；若不存在則不載入 client（僅支援 Excel）
         excel_path = Path(get_app_path('Alldesk.xlsx'))
         # 使用模組級常數 `RUSTDESK_HOST` / `RUSTDESK_KEY`，不在物件上存放副本
@@ -848,13 +817,13 @@ class AnyDesk():
         self.init_anydesk(notebook)
 
     def init_anydesk(self, notebook: ttk.Notebook):
-                """初始化 AnyDesk 分頁：
+        """初始化 AnyDesk 分頁：
 
-                - 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表（或第二張表），
-                    解析成 (tag, id, password) 的 client 列表。
-                - 正規化 AnyDesk 可執行檔路徑並建立 UI 容器。
-                """
-                app: str = ANYDESK_APP
+        - 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表（或第二張表），
+          解析成 (tag, id, password) 的 client 列表。
+        - 正規化 AnyDesk 可執行檔路徑並建立 UI 容器。
+        """
+        app: str = ANYDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表；若不存在則不載入 client（僅支援 Excel）
         excel_path = Path(get_app_path('Alldesk.xlsx'))
         clients = []
