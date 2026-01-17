@@ -1,22 +1,302 @@
 import tkinter as tk
-import shutil, subprocess, threading
-import os, stat, glob, platform, sys, tempfile
+import shutil
+import subprocess
+import threading
+import os
+import stat
+import glob
+import platform
+import sys
+import tempfile
 import winreg
-from Crypto.Cipher import DES
+
+# third-party / local imports
 from openpyxl import load_workbook
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 from tkinter import messagebox
+
+ 
+# 輕量 DES 實作（支援單一 8-byte 區塊的 ECB 加密）
+# 提供兼容介面：DES.new(key, DES.MODE_ECB).encrypt(data)
+class _DES:
+    """
+    簡易 DES 實作（支援單一 8-byte 區塊的 ECB 加密）。
+
+    提供內部 API，模擬 Crypto 庫的行為，使呼叫端可以使用
+    `DES.new(key, DES.MODE_ECB).encrypt(data)` 的介面。
+    此實作僅用於相容性與小型工具，不建議用於生產環境。
+    """
+
+    def __init__(self, key: bytes):
+        """初始化 DES 實例。
+
+        參數:
+        - key: 8 位元組的金鑰 (bytes)
+
+        例外:
+        - TypeError: key 非 bytes-like
+        - ValueError: key 長度非 8
+        """
+        if not isinstance(key, (bytes, bytearray)):
+            raise TypeError('key must be bytes')
+        if len(key) != 8:
+            raise ValueError('DES key must be 8 bytes')
+        self.key = bytes(key)
+        self.subkeys = self._generate_subkeys(self.key)
+
+    @staticmethod
+    def _bytes_to_bits(b: bytes):
+        """將 bytes 轉為位元列表（MSB first）。
+
+        輸入例: b"\x01" -> [0,0,0,0,0,0,0,1]
+        """
+        bits = []
+        for byte in b:
+            for i in range(8)[::-1]:
+                bits.append((byte >> i) & 1)
+        return bits
+
+    @staticmethod
+    def _bits_to_bytes(bits):
+        """將位元列表 (MSB first) 轉回 bytes。
+
+        只支援位元數為 8 的整數倍。
+        """
+        out = bytearray()
+        for i in range(0, len(bits), 8):
+            byte = 0
+            for bit in bits[i:i+8]:
+                byte = (byte << 1) | bit
+            out.append(byte)
+        return bytes(out)
+
+    def _permute(self, table, bits):
+        """依照 permutation 表對位元列表重新排列並回傳新列表。
+
+        table 為 1-based 的索引表。
+        """
+        return [bits[i-1] for i in table]
+
+    def _left_rotate(self, lst, n):
+        """將序列向左旋轉 n 位元。
+
+        用於 DES subkey 的 C/D bits 旋轉。
+        """
+        return lst[n:]+lst[:n]
+
+    def _generate_subkeys(self, key8: bytes):
+        """從 8-byte 原始金鑰產生 16 個 48-bit 子金鑰。
+
+        回傳值為 list[list[int]]，每個子金鑰為位元 (0/1) 列表。
+        """
+        # PC-1
+        pc1 = [57,49,41,33,25,17,9,
+               1,58,50,42,34,26,18,
+               10,2,59,51,43,35,27,
+               19,11,3,60,52,44,36,
+               63,55,47,39,31,23,15,
+               7,62,54,46,38,30,22,
+               14,6,61,53,45,37,29,
+               21,13,5,28,20,12,4]
+
+        # PC-2
+        pc2 = [14,17,11,24,1,5,
+               3,28,15,6,21,10,
+               23,19,12,4,26,8,
+               16,7,27,20,13,2,
+               41,52,31,37,47,55,
+               30,40,51,45,33,48,
+               44,49,39,56,34,53,
+               46,42,50,36,29,32]
+
+        # rotations
+        rotations = [1,1,2,2,2,2,2,2,1,2,2,2,2,2,2,1]
+
+        key_bits = self._bytes_to_bits(key8)
+        permuted = self._permute(pc1, key_bits)
+        c = permuted[:28]
+        d = permuted[28:]
+        subkeys = []
+        for r in rotations:
+            c = self._left_rotate(c, r)
+            d = self._left_rotate(d, r)
+            cd = c + d
+            sub = self._permute(pc2, cd)
+            subkeys.append(sub)
+        return subkeys
+
+    def _feistel(self, r, subkey):
+        """DES 的 Feistel 函數 (f 函數)。
+
+        參數:
+        - r: 右半部位元列表 (32 bits)
+        - subkey: 本輪的子金鑰 (48 bits)
+
+        回傳 32-bit 的位元列表。
+        """
+        # Expansion table
+        e_table = [32,1,2,3,4,5,4,5,6,7,8,9,8,9,10,11,12,13,12,13,14,15,16,17,16,17,18,19,20,21,20,21,22,23,24,25,24,25,26,27,28,29,28,29,30,31,32,1]
+
+        # S-boxes
+        s_boxes = [
+            # S1
+            [
+                14,4,13,1,2,15,11,8,3,10,6,12,5,9,0,7,
+                0,15,7,4,14,2,13,1,10,6,12,11,9,5,3,8,
+                4,1,14,8,13,6,2,11,15,12,9,7,3,10,5,0,
+                15,12,8,2,4,9,1,7,5,11,3,14,10,0,6,13
+            ],
+            # S2
+            [
+                15,1,8,14,6,11,3,4,9,7,2,13,12,0,5,10,
+                3,13,4,7,15,2,8,14,12,0,1,10,6,9,11,5,
+                0,14,7,11,10,4,13,1,5,8,12,6,9,3,2,15,
+                13,8,10,1,3,15,4,2,11,6,7,12,0,5,14,9
+            ],
+            # S3
+            [
+                10,0,9,14,6,3,15,5,1,13,12,7,11,4,2,8,
+                13,7,0,9,3,4,6,10,2,8,5,14,12,11,15,1,
+                13,6,4,9,8,15,3,0,11,1,2,12,5,10,14,7,
+                1,10,13,0,6,9,8,7,4,15,14,3,11,5,2,12
+            ],
+            # S4
+            [
+                7,13,14,3,0,6,9,10,1,2,8,5,11,12,4,15,
+                13,8,11,5,6,15,0,3,4,7,2,12,1,10,14,9,
+                10,6,9,0,12,11,7,13,15,1,3,14,5,2,8,4,
+                3,15,0,6,10,1,13,8,9,4,5,11,12,7,2,14
+            ],
+            # S5
+            [
+                2,12,4,1,7,10,11,6,8,5,3,15,13,0,14,9,
+                14,11,2,12,4,7,13,1,5,0,15,10,3,9,8,6,
+                4,2,1,11,10,13,7,8,15,9,12,5,6,3,0,14,
+                11,8,12,7,1,14,2,13,6,15,0,9,10,4,5,3
+            ],
+            # S6
+            [
+                12,1,10,15,9,2,6,8,0,13,3,4,14,7,5,11,
+                10,15,4,2,7,12,9,5,6,1,13,14,0,11,3,8,
+                9,14,15,5,2,8,12,3,7,0,4,10,1,13,11,6,
+                4,3,2,12,9,5,15,10,11,14,1,7,6,0,8,13
+            ],
+            # S7
+            [
+                4,11,2,14,15,0,8,13,3,12,9,7,5,10,6,1,
+                13,0,11,7,4,9,1,10,14,3,5,12,2,15,8,6,
+                1,4,11,13,12,3,7,14,10,15,6,8,0,5,9,2,
+                6,11,13,8,1,4,10,7,9,5,0,15,14,2,3,12
+            ],
+            # S8
+            [
+                13,2,8,4,6,15,11,1,10,9,3,14,5,0,12,7,
+                1,15,13,8,10,3,7,4,12,5,6,11,0,14,9,2,
+                7,11,4,1,9,12,14,2,0,6,10,13,15,3,5,8,
+                2,1,14,7,4,10,8,13,15,12,9,0,3,5,6,11
+            ]
+        ]
+
+        # P permutation
+        p_table = [16,7,20,21,29,12,28,17,1,15,23,26,5,18,31,10,2,8,24,14,32,27,3,9,19,13,30,6,22,11,4,25]
+
+        # Expand r
+        r_expanded = self._permute(e_table, r)
+        # XOR with subkey
+        xr = [a ^ b for a, b in zip(r_expanded, subkey)]
+        # Split into 8 groups of 6
+        out_bits = []
+        for i in range(8):
+            chunk = xr[i*6:(i+1)*6]
+            row = (chunk[0] << 1) | chunk[5]
+            col = (chunk[1] << 3) | (chunk[2] << 2) | (chunk[3] << 1) | chunk[4]
+            s_val = s_boxes[i][row*16 + col]
+            for bit in range(4)[::-1]:
+                out_bits.append((s_val >> bit) & 1)
+        # P permutation
+        p_out = self._permute(p_table, out_bits)
+        return p_out
+
+    def encrypt(self, data: bytes) -> bytes:
+        """對單一 8-byte 區塊進行 DES 加密（ECB, 單區塊）。
+
+        例外:
+        - TypeError: 非 bytes 輸入
+        - ValueError: 長度非 8
+        回傳: 加密後的 8-byte bytes
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError('data must be bytes')
+        if len(data) != 8:
+            raise ValueError('DES encrypt expects 8-byte block')
+
+        # Initial permutation
+        ip = [58,50,42,34,26,18,10,2,60,52,44,36,28,20,12,4,62,54,46,38,30,22,14,6,64,56,48,40,32,24,16,8,57,49,41,33,25,17,9,1,59,51,43,35,27,19,11,3,61,53,45,37,29,21,13,5,63,55,47,39,31,23,15,7]
+        fp = [40,8,48,16,56,24,64,32,39,7,47,15,55,23,63,31,38,6,46,14,54,22,62,30,37,5,45,13,53,21,61,29,36,4,44,12,52,20,60,28,35,3,43,11,51,19,59,27,34,2,42,10,50,18,58,26,33,1,41,9,49,17,57,25]
+
+        bits = self._bytes_to_bits(data)
+        permuted = self._permute(ip, bits)
+        l = permuted[:32]
+        r = permuted[32:]
+
+        for i in range(16):
+            sub = self.subkeys[i]
+            f_out = self._feistel(r, sub)
+            new_r = [a ^ b for a, b in zip(l, f_out)]
+            l = r
+            r = new_r
+
+        preoutput = r + l
+        final_bits = self._permute(fp, preoutput)
+        return self._bits_to_bytes(final_bits)
+
+
+class DES:
+    MODE_ECB = 1
+
+    @staticmethod
+    def new(key, mode=None):
+        """工廠函式，回傳 _DES 實例以相容舊有介面。
+
+        - 若傳入為 str，使用 latin-1 編碼轉為 bytes。
+        - mode 目前僅為相容參數，未使用。
+        """
+        if isinstance(key, str):
+            key = key.encode('latin-1')
+        return _DES(key)
 # VNC helper functions inlined (from former VNCdesk.py)
 
 """Alldesk GUI 啟動器
 
-提供兩個分頁：RustDesk 與 AnyDesk。程式會從 `Alldesk.xlsx` 中載入
-client 列表（sheet 名稱分別為 'rustdesk' 與 'anydesk'），並在啟動
-遠端連線前，於使用者的 %AppData% 下準備必要的設定檔 (RustDesk2.toml / user.conf)。
-所有功能以只讀 Excel 為來源，已移除 CSV 回退邏輯。
-"""
+功能概述：
+- 提供三個分頁：`RustDesk`、`AnyDesk` 與 `TightVNC`，分別對應三種遠端桌面
+    連線方式與設定檔準備流程。
+- 從 `Alldesk.xlsx` 讀取各分頁的客戶端清單（預期工作表名稱分別為
+    'rustdesk'、'anydesk' 與第3張表用於 VNC）。程式以只讀方式讀取 Excel 作
+    為單一資料來源，UI 上的快速連線按鈕與手動輸入皆來自該檔案內容。
+
+各分頁主要行為：
+- RustDesk：在啟動前於 `%APPDATA%\RustDesk\config` 產生或覆寫
+    `RustDesk2.toml` 與 `peers/<id>.toml`，以預載密碼與視窗設定，然後啟動
+    `rustdesk.exe --connect <id> --password <pwd>`。
+- AnyDesk：在啟動前於 `%APPDATA%\AnyDesk\user.conf` 寫入 viewmode，
+    並以命令列（管道）將密碼傳入啟動 AnyDesk。
+- TightVNC：由第3張工作表讀取 host/port/password，生成 `vnc.vnc`
+    選項檔（輸出到專案內 `./exe/vnc.vnc`），若有密碼則以 TightVNC 相容的
+    加密格式轉換（內含簡易 DES 實作），再啟動 TightVNC 並指定該選項檔。
+
+實作細節：
+- 程式包含一個輕量的 DES 實作用於 TightVNC 密碼轉換（僅支援單一 8-byte
+    區塊的 ECB 加密，為相容用途，不建議用於其他加密需求）。
+- 程式會儘量在可用時使用 COM automation 開啟 Excel（以便指定工作表），
+    否則會 fallback 至使用系統關聯或 excel.exe 啟動檔案。
+
+安全/相容性說明：
+- 此工具以提高便利性為主，檔案 I/O 與執行外部程式的作法會盡量處理常見
+    錯誤（例：檔案不存在、唯讀屬性），但使用者應評估在公司環境或生產環境
+    的安全性與授權。"""
 
 # 預設值（可用環境變數覆寫）
 # 將可執行檔統一放到專案內的 `exe` 資料夾（相對於此檔案），使用環境變數可覆寫
@@ -36,6 +316,13 @@ TIGHTVNC_APP = os.getenv('TIGHTVNC_APP', str(EXE_DIR / 'TightVNC.exe'))
 VNC_BASE_DIR = getattr(sys, '_MEIPASS', None) or str(Path(__file__).resolve().parent)
 
 def resource_path(filename: str) -> str:
+    """取得打包後或開發模式下的資源檔案絕對路徑。
+
+    參數:
+    - filename: 相對於資源根目錄的檔案名稱
+
+    回傳: 平台相容的絕對路徑字串
+    """
     return os.path.join(VNC_BASE_DIR, filename)
 
 
@@ -155,12 +442,24 @@ def open_alldesk_excel(sheet_idx: int | None = None):
 
 
 def get_writable_dir() -> str:
+    """回傳一個在此環境中可寫入的目錄。
+
+    - 若為封裝後的執行檔（frozen），使用系統暫存目錄。
+    - 開發模式則回傳此原始檔所在資料夾。
+    """
     if getattr(sys, 'frozen', False):
         return tempfile.gettempdir()
     return os.path.dirname(__file__)
 
 
 def encrypt_tightvnc_password(password: str) -> str:
+    """將 TightVNC 的純文字密碼轉為 vnc 設定檔所使用的加密十六進位字串。
+
+    演算法說明：
+    - 取前 8 個 ASCII 字元，不足以 NUL 填充。
+    - 使用 TightVNC 固定的 challenge bytes，對每個 byte 做 bit-reverse，
+      將結果當作 DES key，使用 ECB 加密密碼區塊後回傳 hex 表示。
+    """
     # take up to first 8 ASCII chars, pad with NULs
     pw = (password or '')[:8].encode('ascii', errors='ignore')
     pw = pw.ljust(8, b'\x00')
@@ -180,9 +479,16 @@ def encrypt_tightvnc_password(password: str) -> str:
 
 
 def create_header_row(parent, on_connect, with_port=False, default_port='5900'):
-    """建立共用的 header row：連接ID / 密碼 / 連接 / (埠)
+    """建立各遠端分頁共用的標頭區塊（輸入欄位與連接按鈕）。
 
-    回傳 (ent_id, ent_pwd, ent_port)
+    參數:
+    - parent: 要放置 header 的父容器 (tk widget)
+    - on_connect: 當使用者按下「連接」按鈕時的回呼，會傳入 (id, pwd, port)
+    - with_port: 是否顯示埠號輸入欄
+    - default_port: 埠號欄位的預設值
+
+    回傳: tuple (ent_id, ent_pwd, ent_port) — 若 `with_port` 為 False，則
+    ent_port 會是 None。
     """
     header = ttk.Frame(parent)
     header.grid(row=0, column=0, columnspan=10, sticky='w')
@@ -230,10 +536,20 @@ class RustDesk():
       並在 peers 資料夾中寫入 `<ID>.toml`，以調整視窗/預載密碼等設定。
     """
     def __init__(self, notebook: ttk.Notebook):
+        """建立 RustDesk 分頁物件並初始化其 UI 與資料。
+
+        傳入 `notebook` 並呼叫 `init_rustdesk` 進行資料讀取與 UI 容器建立。
+        """
         self.init_rustdesk(notebook)
 
     def init_rustdesk(self, notebook: ttk.Notebook):
-        app = RUSTDESK_APP
+                """初始化 RustDesk 分頁：
+
+                - 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表（或第一張表），
+                    解析成 (tag, id, password) 的 client 列表。
+                - 正規化 rustdesk 可執行檔路徑並建立 UI 容器。
+                """
+                app = RUSTDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'rustdesk' 工作表；若不存在則不載入 client（僅支援 Excel）
         excel_path = Path(get_app_path('Alldesk.xlsx'))
         # 使用模組級常數 `RUSTDESK_HOST` / `RUSTDESK_KEY`，不在物件上存放副本
@@ -525,10 +841,20 @@ class AnyDesk():
     - 在啟動 AnyDesk 前於 %AppData%/AnyDesk 寫入 `user.conf`，以控制視圖模式。
     """
     def __init__(self, notebook: ttk.Notebook):
+        """建立 AnyDesk 分頁物件並初始化其 UI 與資料。
+
+        傳入 `notebook` 並呼叫 `init_anydesk` 讀取 Excel 並準備按鈕與執行檔路徑。
+        """
         self.init_anydesk(notebook)
 
     def init_anydesk(self, notebook: ttk.Notebook):
-        app: str = ANYDESK_APP
+                """初始化 AnyDesk 分頁：
+
+                - 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表（或第二張表），
+                    解析成 (tag, id, password) 的 client 列表。
+                - 正規化 AnyDesk 可執行檔路徑並建立 UI 容器。
+                """
+                app: str = ANYDESK_APP
         # 讀取 `Alldesk.xlsx` 的 'anydesk' 工作表；若不存在則不載入 client（僅支援 Excel）
         excel_path = Path(get_app_path('Alldesk.xlsx'))
         clients = []
@@ -648,6 +974,11 @@ class TightVNC():
     - Port: 連接埠（按鈕上不顯示）
     """
     def __init__(self, notebook: ttk.Notebook):
+        """建立 TightVNC 分頁物件並從第3張工作表讀取 VNC 連線項目。
+
+        會將讀取結果存在 `self.clients`，並在 `set_elements_tightvnc` 中
+        產生 UI 按鈕用於快速連線。
+        """
         app = 'vnc'
         excel_path = Path('./Alldesk.xlsx')
         clients = []
@@ -680,7 +1011,13 @@ class TightVNC():
         notebook.add(self.frame, text = 'TightVNC')
 
     def _prepare_and_launch_tightvnc(self, host: str, port: str, password: str):
-        # 以 VNCdesk 的資源路徑與工具產生可寫入的 vnc.vnc 並啟動 TightVNC
+        """準備 TightVNC 的 `vnc.vnc` 選項檔並啟動 TightVNC。
+
+        功能：
+        - 讀取預設範本 `vnc.vnc`（資源），在 [connection] 區段替換 host/port/password
+        - 若缺少 [connection] 或 [options] 則補上合理的預設值
+        - 將處理後的設定寫入專案內 `./exe/vnc.vnc`，並傳給 TightVNC 執行檔
+        """
         vnc_source = resource_path('vnc.vnc')
         if os.path.exists(vnc_source):
             try:
@@ -816,7 +1153,14 @@ class TightVNC():
             pass
 
     def run_tightvnc(self, item, url, password, port):
-        # 呼叫核心邏輯
+        """啟動 TightVNC 連線的高階介面。
+
+        參數:
+        - item: 顯示用的項目名稱（不影響連線）
+        - url: 目標主機
+        - password: 連線密碼（可空）
+        - port: 埠號（預設 5900）
+        """
         host = url or ''
         prt = port or '5900'
         self._prepare_and_launch_tightvnc(host, prt, password)
@@ -906,6 +1250,11 @@ notebook.add(excel_frame, text='EXCEL')
 _last_tab = {'id': notebook.select()}
 
 def _on_tab_changed(event):
+    """Notebook tab 變更事件處理。
+
+    若使用者切換到 'EXCEL' 分頁，則開啟 `Alldesk.xlsx`（嘗試指定
+    對應的工作表），並恢復到上一個選取的分頁。
+    """
     sel = event.widget.select()
     try:
         txt = event.widget.tab(sel, 'text') or ''
