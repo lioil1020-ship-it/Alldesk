@@ -3,7 +3,7 @@ import shutil, subprocess, threading
 import os, stat, glob, platform, sys, tempfile
 import winreg
 from Crypto.Cipher import DES
-import pandas as pd
+from openpyxl import load_workbook
 from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -178,6 +178,49 @@ def encrypt_tightvnc_password(password: str) -> str:
     cipher = DES.new(key, DES.MODE_ECB)
     return cipher.encrypt(pw).hex()
 
+
+def create_header_row(parent, on_connect, with_port=False, default_port='5900'):
+    """建立共用的 header row：連接ID / 密碼 / 連接 / (埠)
+
+    回傳 (ent_id, ent_pwd, ent_port)
+    """
+    header = ttk.Frame(parent)
+    header.grid(row=0, column=0, columnspan=10, sticky='w')
+
+    # 連接 ID
+    f_id = ttk.Frame(header)
+    f_id.pack(side='left', padx=10)
+    tk.Label(f_id, text="連接ID:").pack(side='left')
+    ent_id = tk.Entry(f_id, width=28)
+    ent_id.pack(side='left', padx=6)
+
+    # 密碼
+    f_pwd = ttk.Frame(header)
+    f_pwd.pack(side='left', padx=10)
+    tk.Label(f_pwd, text="密碼:").pack(side='left')
+    ent_pwd = tk.Entry(f_pwd, show='*', width=30)
+    ent_pwd.pack(side='left', padx=6)
+
+    # 連接按鈕
+    # ent_port 可能尚未定義，故預先建立為 None，lambda 內再讀取
+    ent_port = None
+    def _on_click():
+        on_connect(ent_id.get(), ent_pwd.get(), ent_port.get() if with_port and ent_port is not None else None)
+
+    btn = tk.Button(header, text="連接", command=_on_click)
+    btn.pack(side='left', padx=6)
+
+    # 埠（可選）
+    if with_port:
+        f_port = ttk.Frame(header)
+        f_port.pack(side='left', padx=10)
+        tk.Label(f_port, text="埠:").pack(side='left')
+        ent_port = tk.Entry(f_port, width=8)
+        ent_port.pack(side='left', padx=6)
+        ent_port.insert(0, default_port)
+
+    return ent_id, ent_pwd, ent_port
+
 class RustDesk():
     """RustDesk 分頁：從 Excel 載入 client 並發起 RustDesk 連線。
 
@@ -197,12 +240,16 @@ class RustDesk():
         clients = []
         if excel_path.exists():
             try:
-                try:
-                    df = pd.read_excel(excel_path, sheet_name='rustdesk', engine='openpyxl')
-                except Exception:
-                    # 若找不到命名 sheet，回退到第 0 張
-                    df = pd.read_excel(excel_path, sheet_name=0, engine='openpyxl')
-                rows = df.astype(str).fillna('').values.tolist()
+                wb = load_workbook(filename=str(excel_path), read_only=True, data_only=True)
+                # 優先嘗試按工作表名稱取表，否則使用第一張
+                if 'rustdesk' in wb.sheetnames:
+                    ws = wb['rustdesk']
+                else:
+                    ws = wb[wb.sheetnames[0]] if wb.sheetnames else None
+                rows = []
+                if ws is not None:
+                    for r in ws.iter_rows(values_only=True):
+                        rows.append(['' if v is None else str(v) for v in r])
                 # 只取前三欄 (tag, id, password)，若不足則以空字串補齊
                 clients = [
                     (row[0] if len(row) > 0 else '', row[1] if len(row) > 1 else '', row[2] if len(row) > 2 else '')
@@ -253,26 +300,40 @@ class RustDesk():
         excel_path = Path(get_app_path('Alldesk.xlsx'))
         if excel_path.exists():
             try:
-                df0 = pd.read_excel(excel_path, sheet_name=0, engine='openpyxl').astype(str).fillna('')
-                if not df0.empty:
-                    cols = [c.lower() for c in df0.columns]
-                    id_idx = None
-                    pwd_idx = None
-                    for i, c in enumerate(cols):
-                        if id_idx is None and 'id' in c:
-                            id_idx = i
-                        if pwd_idx is None and ('pass' in c or 'password' in c):
-                            pwd_idx = i
-                    if id_idx is None and df0.shape[1] >= 2:
-                        id_idx = 1
-                    if pwd_idx is None and df0.shape[1] >= 3:
-                        pwd_idx = 2
-                    if id_idx is None:
-                        id_idx = 0
-                    if pwd_idx is None:
-                        pwd_idx = id_idx + 1 if df0.shape[1] > id_idx + 1 else id_idx
-                    sheet_id = str(df0.iat[0, id_idx]).strip()
-                    sheet_pwd = str(df0.iat[0, pwd_idx]).strip()
+                wb0 = load_workbook(filename=str(excel_path), read_only=True, data_only=True)
+                ws0 = wb0[wb0.sheetnames[0]] if wb0.sheetnames else None
+                sheet_id = ''
+                sheet_pwd = ''
+                if ws0 is not None:
+                    rows0 = [tuple('' if v is None else v for v in r) for r in ws0.iter_rows(values_only=True)]
+                    # 需有 header + data 才視為有可取的預設值（模擬 pandas 讀入後 df.empty 檢查）
+                    if len(rows0) >= 2:
+                        headers = [str(c).lower() if c is not None else '' for c in rows0[0]]
+                        data_row = [str(v) if v is not None else '' for v in rows0[1]]
+                        id_idx = None
+                        pwd_idx = None
+                        for i, c in enumerate(headers):
+                            if id_idx is None and 'id' in c:
+                                id_idx = i
+                            if pwd_idx is None and ('pass' in c or 'password' in c):
+                                pwd_idx = i
+                        cols_count = len(headers)
+                        if id_idx is None and cols_count >= 2:
+                            id_idx = 1
+                        if pwd_idx is None and cols_count >= 3:
+                            pwd_idx = 2
+                        if id_idx is None:
+                            id_idx = 0
+                        if pwd_idx is None:
+                            pwd_idx = id_idx + 1 if cols_count > id_idx + 1 else id_idx
+                        try:
+                            sheet_id = str(data_row[id_idx]).strip()
+                        except Exception:
+                            sheet_id = ''
+                        try:
+                            sheet_pwd = str(data_row[pwd_idx]).strip()
+                        except Exception:
+                            sheet_pwd = ''
                     # 只有在傳入的 client_id / password 為空時，才使用 Excel 第1張的預設值
                     try:
                         client_id_empty = not client_id or str(client_id).strip() == ''
@@ -415,18 +476,20 @@ class RustDesk():
         元件包括：
         - 輸入欄位：連接 ID、密碼
         - 連接按鈕：手動輸入後啟動連線
-        - 以 Excel 讀取到的 client 列表動態建立按鈕（快速連線）
         """
-        tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
-        ent_id = tk.Entry(self.frame, width=28)
-        ent_id.grid(row=0, column=0, columnspan=2, padx= 10, sticky='e')
-        tk.Label(self.frame, text="密碼:").grid(row=0, column=2, sticky='w', columnspan=2, padx=10)
-        ent_pass = tk.Entry(self.frame, show='*', width=30)
-        ent_pass.grid(row=0, column=2, sticky='e', columnspan=2, padx=10)
-        tk.Button(self.frame, text="連接", command=lambda:self.run_rustdesk(ent_id.get(), ent_pass.get())).grid(row=0, column=4, sticky='w', padx=10)
+        # 使用共用 header
+        create_header_row(
+            self.frame,
+            on_connect=lambda cid, pwd, _: self.run_rustdesk(cid, pwd),
+            with_port=False
+        )
+
         ttk.Separator(self.frame, orient='horizontal').grid(row=1, column=0, columnspan=10, sticky='ew', padx=10, pady=5)
 
-        row, col = 2, 0
+        # 按鈕容器，避免 header 欄位影響按鈕排版
+        btn_container = ttk.Frame(self.frame)
+        btn_container.grid(row=2, column=0, columnspan=10, sticky='w')
+        row, col = 0, 0
         for client in self.clients:
             # client 可能是長度不一的 tuple/list，安全取值
             try:
@@ -441,7 +504,12 @@ class RustDesk():
                 password = client[2]
             except Exception:
                 password = ''
-            tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
+            # 避免把 Excel 的表頭當成按鈕（例如：'設備名稱', 'ID', 'Item'）
+            if isinstance(tag, str) and tag.strip().lower() in ('設備名稱', 'id', 'item', 'name'):
+                continue
+            if isinstance(client_id, str) and client_id.strip().lower() in ('設備名稱', 'id', 'item', 'name'):
+                continue
+            tk.Button(btn_container, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
                 command = lambda cid = client_id, pwd = password: self.run_rustdesk(cid, pwd)
             ).grid(row=row, column=col, padx=3, pady=3)
             col += 1
@@ -466,12 +534,16 @@ class AnyDesk():
         clients = []
         if excel_path.exists():
             try:
-                try:
-                    df = pd.read_excel(excel_path, sheet_name='anydesk', engine='openpyxl')
-                except Exception:
-                    # 若找不到命名 sheet，回退到第 1 張
-                    df = pd.read_excel(excel_path, sheet_name=1, engine='openpyxl')
-                rows = df.astype(str).fillna('').values.tolist()
+                wb = load_workbook(filename=str(excel_path), read_only=True, data_only=True)
+                # 優先嘗試按工作表名稱取表，否則使用第二張（index=1）
+                if 'anydesk' in wb.sheetnames:
+                    ws = wb['anydesk']
+                else:
+                    ws = wb[wb.sheetnames[1]] if len(wb.sheetnames) > 1 else (wb[wb.sheetnames[0]] if wb.sheetnames else None)
+                rows = []
+                if ws is not None:
+                    for r in ws.iter_rows(values_only=True):
+                        rows.append(['' if v is None else str(v) for v in r])
                 clients = [
                     (row[0] if len(row) > 0 else '', row[1] if len(row) > 1 else '', row[2] if len(row) > 2 else '')
                     for row in rows
@@ -527,16 +599,19 @@ class AnyDesk():
         - 手動輸入 ID/密碼 的欄位與連接按鈕
         - 由 Excel 載入的快速連線按鈕
         """
-        tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
-        ent_id = tk.Entry(self.frame, width=28)
-        ent_id.grid(row=0, column=0, columnspan=2, padx= 10, sticky='e')
-        tk.Label(self.frame, text="密碼:").grid(row=0, column=2, sticky='w', columnspan=2, padx=10)
-        ent_pass = tk.Entry(self.frame, show='*', width=30)
-        ent_pass.grid(row=0, column=2, sticky='e', columnspan=2, padx=10)
-        tk.Button(self.frame, text="連接", command=lambda:self.run_anydesk(ent_id.get(), ent_pass.get())).grid(row=0, column=4, sticky='w', padx=10)
+        # 使用共用 header
+        create_header_row(
+            self.frame,
+            on_connect=lambda cid, pwd, _: self.run_anydesk(cid, pwd),
+            with_port=False
+        )
+
         ttk.Separator(self.frame, orient='horizontal').grid(row=1, column=0, columnspan=10, sticky='ew', padx=10, pady=5)
 
-        row, col = 2, 0
+        # 按鈕容器，避免 header 欄位影響按鈕排版
+        btn_container = ttk.Frame(self.frame)
+        btn_container.grid(row=2, column=0, columnspan=10, sticky='w')
+        row, col = 0, 0
         for client in self.clients:
             try:
                 tag = client[0]
@@ -550,7 +625,12 @@ class AnyDesk():
                 password = client[2]
             except Exception:
                 password = ''
-            tk.Button(self.frame, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4,
+            # 避免把 Excel 的表頭當成按鈕（例如：'設備名稱', 'ID', 'Item'）
+            if isinstance(tag, str) and tag.strip().lower() in ('設備名稱', 'id', 'item', 'name'):
+                continue
+            if isinstance(client_id, str) and client_id.strip().lower() in ('設備名稱', 'id', 'item', 'name'):
+                continue
+            tk.Button(btn_container, text=f"{tag}\n{client_id}", font=('微軟正黑體',10), width=15, height=4, 
                 command = lambda cid = client_id, pwd = password: self.run_anydesk(cid, pwd)
             ).grid(row=row, column=col, padx=3, pady=3)
             col += 1
@@ -574,8 +654,21 @@ class TightVNC():
         if excel_path.exists():
             try:
                 # 讀取第3張工作表（index=2）並轉為字典列（保留欄名以供對應）
-                df = pd.read_excel(excel_path, sheet_name=2, engine='openpyxl').astype(str).fillna('')
-                clients = df.to_dict(orient='records')
+                wb = load_workbook(filename=str(excel_path), read_only=True, data_only=True)
+                if len(wb.sheetnames) > 2:
+                    ws = wb[wb.sheetnames[2]]
+                elif wb.sheetnames:
+                    ws = wb[wb.sheetnames[0]]
+                else:
+                    ws = None
+                clients = []
+                if ws is not None:
+                    rows = [tuple('' if v is None else v for v in r) for r in ws.iter_rows(values_only=True)]
+                    if rows:
+                        headers = [str(h) if h is not None else '' for h in rows[0]]
+                        for r in rows[1:]:
+                            rec = {headers[i]: ('' if r[i] is None else str(r[i])) if i < len(r) else '' for i in range(len(headers))}
+                            clients.append(rec)
             except Exception:
                 clients = []
         else:
@@ -729,27 +822,20 @@ class TightVNC():
         self._prepare_and_launch_tightvnc(host, prt, password)
 
     def set_elements_tightvnc(self):
-        # 不顯示 Item 的頂部輸入欄；將 連接ID、密碼、連接按鈕與其他分頁對齊，
-        # 並將埠放在最右側（預設為 5900）
-        tk.Label(self.frame, text="連接ID:").grid(row=0, column=0, columnspan=2, padx=10, sticky='w')
-        ent_url = tk.Entry(self.frame, width=28)
-        ent_url.grid(row=0, column=0, columnspan=2, padx=10, sticky='e')
+        """建立 TightVNC 分頁的 UI 元件。使用共用 header（含埠）。"""
+        create_header_row(
+            self.frame,
+            on_connect=lambda cid, pwd, port: self.run_tightvnc('', cid, pwd, port),
+            with_port=True,
+            default_port='5900'
+        )
 
-        tk.Label(self.frame, text="密碼:").grid(row=0, column=2, columnspan=2, padx=10, sticky='w')
-        ent_pass = tk.Entry(self.frame, show='*', width=30)
-        ent_pass.grid(row=0, column=2, columnspan=2, padx=10, sticky='e')
-
-        # 連接按鈕放在與其他分頁相同的位置
-        tk.Button(self.frame, text="連接", command=lambda: self.run_tightvnc('', ent_url.get(), ent_pass.get(), ent_port.get())).grid(row=0, column=4, sticky='w', padx=10)
-
-        # 埠 放在最右側並預設為 5900
-        tk.Label(self.frame, text="埠:").grid(row=0, column=5, sticky='w', padx=6)
-        ent_port = tk.Entry(self.frame, width=8)
-        ent_port.grid(row=0, column=6, sticky='e', padx=6)
-        ent_port.insert(0, '5900')
         ttk.Separator(self.frame, orient='horizontal').grid(row=1, column=0, columnspan=10, sticky='ew', padx=10, pady=5)
 
-        row, col = 2, 0
+        # 按鈕容器，避免 header 欄位影響按鈕排版
+        btn_container = ttk.Frame(self.frame)
+        btn_container.grid(row=2, column=0, columnspan=10, sticky='w')
+        row, col = 0, 0
         # 支援多種表頭名稱（中/英）對應到 item / url / password / 埠
         def get_field(rec, candidates):
             for key in rec.keys():
@@ -758,13 +844,12 @@ class TightVNC():
                     if c == k:
                         return str(rec[key]).strip()
             return ''
-
         for rec in self.clients:
             tag = get_field(rec, ['item', '設備名稱', 'name'])
             url = get_field(rec, ['url', 'id', 'address'])
             pwd = get_field(rec, ['password', '密碼', 'pass'])
             prt = get_field(rec, ['port', '埠', '埠號'])
-            tk.Button(self.frame, text=f"{tag}\n{url}", font=('微軟正黑體',10), width=15, height=4,
+            tk.Button(btn_container, text=f"{tag}\n{url}", font=('微軟正黑體',10), width=15, height=4,
                 command = (lambda t=tag, u=url, p=pwd, pt=prt: self.run_tightvnc(t, u, p, pt))
             ).grid(row=row, column=col, padx=3, pady=3)
             col += 1
@@ -778,8 +863,25 @@ gui.title('Alldesk')
 
 # 調整 Notebook 標籤字型：加大並改為粗體以便與 UI 一致
 style = ttk.Style()
+# 為了讓 tab 的背景/前景 mapping 生效，嘗試使用 'clam' 主題（較支援 element 顏色客製化）
+try:
+    if 'clam' in style.theme_names():
+        style.theme_use('clam')
+except Exception:
+    pass
 tab_font = tkfont.Font(family='微軟正黑體', size=11, weight='bold')
-style.configure('Big.TNotebook.Tab', font=tab_font, padding=[12, 6])
+style.configure('Big.TNotebook.Tab', font=tab_font, padding=[12, 6], background='#f0f0f0', foreground='black')
+# 確保 Notebook 本體與 tab 的預設背景一致
+try:
+    style.configure('TNotebook', background='#f0f0f0')
+    style.configure('TNotebook.Tab', background='#f0f0f0')
+except Exception:
+    pass
+# 當 tab 被選取時顯示黑底白字；未選取則為淺灰底黑字
+style.map('Big.TNotebook.Tab',
+    background=[('selected', 'black'), ('!selected', '#f0f0f0')],
+    foreground=[('selected', 'white'), ('!selected', 'black')]
+)
 
 # 使用一個容器，將 `Notebook` 放左邊，右邊放一個 `EXCEL` 按鈕
 container = ttk.Frame(gui)
