@@ -1,5 +1,92 @@
 # Alldesk
 
+Alldesk 是一個針對 Windows 的輕量 GUI 管理工具，用於快速啟動與預先設定常見的遠端桌面客戶端（RustDesk、AnyDesk、TightVNC）。
+
+核心資料來源已改為 `Alldesk.json` 與 CSV 匯入/匯出；使用者也可在應用程式 UI 內直接新增、編輯、刪除客戶資料。
+
+---
+
+**主要功能**
+
+- 使用 `Alldesk.json` 作為主要儲存格式（程式會在啟動時自動建立 `Alldesk.json` 若不存在）。
+- 支援從 CSV 匯入與匯出客戶清單，用於批次管理或與其他系統整合。
+- 應用程式 UI 支援：新增 / 編輯 / 刪除 客戶項目，並能即時儲存至 `Alldesk.json`。
+- 啟動並預先設定外部客戶端（RustDesk、AnyDesk、TightVNC），在啟動前會自動建立或更新必要的本機設定檔（位於 `%APPDATA%`）。
+- TightVNC 密碼會轉換為 TightVNC 相容格式（程式內含用於此轉換的輕量 DES 實作）。
+
+---
+
+**支援平台**
+
+- Windows（程式會使用 `%APPDATA%` 與 Win32 相關行為）。
+
+---
+
+**需求（執行 / 開發）**
+
+請以專案根目錄的 `requirements.txt` 為依據安裝相依套件。若需 COM 自動化或進階 Windows 操作，可選安裝：
+
+- `pywin32` / `comtypes` / `pywinauto`（可選，若需要與 Microsoft Excel 或進階 UI 自動化）
+- 其餘套件請參考 `requirements.txt` 或 `pyproject.toml`。
+
+建立虛擬環境範例：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+---
+
+**資料檔說明**
+
+- `Alldesk.json`：程式主要儲存格式，包含多個區段（例如 rustdesk / anydesk / vnc），程式會在 UI 操作時讀寫該檔案。
+- CSV：匯入（import）會嘗試對應常見欄位並加入到指定區段；匯出（export）會將指定區段匯成 CSV 供外部使用。
+
+建議 CSV 欄位（依服務類型）：
+- RustDesk / AnyDesk：`name, id, password`
+- TightVNC：`name, host, port, password`
+
+---
+
+**使用說明（快速開始）**
+
+1. 若尚無 `Alldesk.json`，程式啟動時會自動建立空結構；或手動建立並放在程式執行目錄。
+2. 執行：
+
+```powershell
+python Alldesk.py
+```
+
+3. 在 UI 中新增 / 編輯 / 刪除 客戶，或使用匯入 CSV 批次新增；匯出可產生可分享的 CSV 檔。
+4. 選擇連線按鈕時，程式會依項目類型（RustDesk / AnyDesk / TightVNC）預先寫入所需設定並啟動對應外部程式。
+
+---
+
+**安全性注意事項**
+
+- `Alldesk.json` 或 CSV 檔可能包含明文密碼，請妥善保管與存取權限控管。
+- 內建的 DES 實作僅用於 TightVNC 密碼格式轉換，不應用作安全加密或機密保存。
+
+---
+
+**疑難排解**
+
+- 外部客戶端啟動失敗：檢查 `exe/` 目錄或對應環境變數（`RUSTDESK_APP`、`ANYDESK_APP`、`TIGHTVNC_APP`）是否正確。
+- 匯入 CSV 欄位錯誤：確認 CSV 欄位名稱符合建議格式或手動在 UI 補齊必要欄位。
+
+---
+
+**授權**
+
+參考專案根目錄的 `LICENSE` 檔案。
+
+---
+
+若要我代為提交並推送此變更，回覆確認即可，我會執行 commit + push。 
+# Alldesk
+
 Alldesk 是一個針對 Windows 的輕量 GUI 工具，用來從 Excel 清單快速啟動與預先設定常見的遠端桌面客戶端（RustDesk、AnyDesk、TightVNC）。
 
 核心目標：減少支援人員在現場或遠端操作時的手動設定步驟，並在啟動外部客戶端前自動建立或更新必要的本機設定檔，以達到較一致的連線行為。
