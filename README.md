@@ -1,5 +1,118 @@
 # Alldesk
 
+Alldesk 是一個針對 Windows 的輕量 GUI 工具，用來從 Excel 清單快速啟動與預先設定常見的遠端桌面客戶端（RustDesk、AnyDesk、TightVNC）。
+
+核心目標：減少支援人員在現場或遠端操作時的手動設定步驟，並在啟動外部客戶端前自動建立或更新必要的本機設定檔，以達到較一致的連線行為。
+
+---
+
+**主要功能**
+
+- 由 Excel（建議檔名 `Alldesk.xlsx`）讀取連線清單，動態生成快速連線按鈕。
+- 支援預先寫入或調整應用程式設定（寫入 `%APPDATA%` 下對應的設定檔）以控制：
+  - RustDesk：可預載 ID/密碼與設定檔
+  - AnyDesk：可寫入 `user.conf` 並以命令列傳入密碼
+  - TightVNC：產生 `vnc.vnc` 選項檔並將密碼轉換為 TightVNC 相容格式（程式內含專為此用途的輕量 DES 實作）
+- 若系統安裝 Microsoft Excel 且安裝 `pywin32`，程式會嘗試使用 COM automation 讀取 Excel；否則以資料匯入或系統預設方式開啟檔案。
+
+---
+
+**支援平台**
+
+- Windows（程式會使用 `%APPDATA%` 與 Win32 相關行為）。
+
+---
+
+**需求（開發 / 執行）**
+
+建議使用 Python 3.9+ 並在虛擬環境中安裝相依：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+核心套件（請以專案中的 `requirements.txt` 或 `pyproject.toml` 為準）：
+- `openpyxl`：讀取 Excel
+- `pywin32`、`comtypes`、`pywinauto`（可選）：若需 COM automation 或進階 Windows 自動化
+
+---
+
+**快速開始（開發模式）**
+
+在專案根目錄執行：
+
+```powershell
+python Alldesk.py
+```
+
+執行前：
+- 將 `Alldesk.xlsx` 放在與 `Alldesk.py` 相同目錄，或與可執行檔放在同資料夾。
+- 若欲使用本專案內的外部執行檔，請將它們放到 `exe/` 資料夾（例如 `exe/rustdesk.exe`、`exe/AnyDesk.exe`、`exe/TightVNC.exe`），或透過環境變數覆寫路徑：
+
+```powershell
+$env:RUSTDESK_APP = 'C:\path\to\rustdesk.exe'
+$env:ANYDESK_APP = 'C:\path\to\AnyDesk.exe'
+$env:TIGHTVNC_APP = 'C:\path\to\vncviewer.exe'
+python Alldesk.py
+```
+
+---
+
+**Excel 清單建議格式**
+
+程式會嘗試以不區分大小寫的欄位名匹配資料，建議三張常用工作表（或以欄位區分）：
+
+- RustDesk 表（sheet 名稱可自由）： `設備名稱`, `ID`, `密碼`
+- AnyDesk 表： `設備名稱`, `ID`, `密碼`
+- TightVNC 表： `設備名稱`, `URL` 或 `HOST`, `埠`, `密碼`
+
+程式具備欄位容錯處理，但依照上述格式建立能取得最穩定的結果。
+
+---
+
+**安全性說明**
+
+- `Alldesk.xlsx` 可能包含明文密碼，請妥善管理與傳輸該檔案。
+- 程式內的 DES 實作僅用於將密碼轉為 TightVNC 相容格式，非通用加密庫，勿用於安全機密存放。
+
+---
+
+**打包建議**
+
+- 可使用 PyInstaller 產生 `onefile` 或 `onedir`：
+
+```powershell
+pip install pyinstaller
+pyinstaller --noconfirm --onefile --windowed Alldesk.py
+```
+
+- 注意 `onefile` 與 `onedir` 在資源解析與 single-instance 行為上可能不同；請測試兩種模式以決定合適打包方式。
+
+---
+
+**疑難排解**
+
+- 外部客戶端啟動失敗：檢查 `exe/` 目錄或對應環境變數是否正確。
+- Excel 無法以 COM 開啟：確認本機是否安裝 Microsoft Excel 並安裝 `pywin32`。
+- 打包後行為異常：檢查 PyInstaller 的參數與資源包含設定。
+
+---
+
+**授權**
+
+參考專案根目錄的 `LICENSE` 檔案。
+
+---
+
+若要我幫你：
+
+- 以 `git` 將新的 `README.md` commit 並 push（我可以代為執行），或
+- 將 README 翻成英文 / 補上範例圖片與操作教學。
+
+# Alldesk
+
 ## 專案簡介
 Alldesk 是一個針對 Windows 的輕量 GUI 工具，主要用途為快速啟動並協助配置三種常見的遠端桌面工具：
 
