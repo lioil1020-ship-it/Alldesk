@@ -1302,7 +1302,9 @@ def encrypt_tightvnc_password(password: str) -> str:
     return cipher.encrypt(pw).hex()
 
 
-def create_header_row(parent, on_connect, with_port=False, default_port="5900"):
+def create_header_row(
+    parent, on_connect, with_port=False, default_port="5900", section=""
+):
     """建立各遠端分頁共用的標頭區塊(輸入欄位與連接按鈕).
 
     參數:
@@ -1310,22 +1312,34 @@ def create_header_row(parent, on_connect, with_port=False, default_port="5900"):
     - on_connect: 當使用者按下「連接」按鈕時的回呼,會傳入 (id, pwd, port)
     - with_port: 是否顯示埠號輸入欄
     - default_port: 埠號欄位的預設值
+    - section: 區段名稱 ('rustdesk', 'anydesk', 'tightvnc')
 
     回傳: tuple (ent_id, ent_pwd, ent_port) - 若 `with_port` 為 False,則
     ent_port 會是 None.
     """
     header = ttk.Frame(parent)
-    header.grid(row=0, column=0, columnspan=10, sticky="w")
+    header.grid(row=0, column=0, columnspan=10, sticky="ew")
+
+    # 左側容器 (連接相關)
+    left_container = ttk.Frame(header)
+    left_container.pack(side="left", fill="x", expand=True)
+
+    # 右側容器 (CSV 按鈕) - 使用 place 確保在最右邊
+    right_container = None
+    if section:
+        right_container = ttk.Frame(header)
+        # 使用 place 確保按鈕始終在最右邊，調整 x 偏移量讓按鈕更貼近右邊緣
+        right_container.place(relx=1.0, rely=0.5, anchor="e", x=-5)
 
     # 連接 ID
-    f_id = ttk.Frame(header)
+    f_id = ttk.Frame(left_container)
     f_id.pack(side="left", padx=10)
     tk.Label(f_id, text="連接ID:").pack(side="left")
     ent_id = tk.Entry(f_id, width=28)
     ent_id.pack(side="left", padx=6)
 
     # 密碼
-    f_pwd = ttk.Frame(header)
+    f_pwd = ttk.Frame(left_container)
     f_pwd.pack(side="left", padx=10)
     tk.Label(f_pwd, text="密碼:").pack(side="left")
     ent_pwd = tk.Entry(f_pwd, show="*", width=30)
@@ -1342,17 +1356,37 @@ def create_header_row(parent, on_connect, with_port=False, default_port="5900"):
             ent_port.get() if with_port and ent_port is not None else None,
         )
 
-    btn = tk.Button(header, text="連接", command=_on_click)
+    btn = tk.Button(left_container, text="連接", command=_on_click)
     btn.pack(side="left", padx=6)
 
     # 埠(可選)
     if with_port:
-        f_port = ttk.Frame(header)
+        f_port = ttk.Frame(left_container)
         f_port.pack(side="left", padx=10)
         tk.Label(f_port, text="埠:").pack(side="left")
         ent_port = tk.Entry(f_port, width=8)
         ent_port.pack(side="left", padx=6)
         ent_port.insert(0, default_port)
+
+    # CSV 按鈕
+    if section and right_container:
+        # CSV 匯出按鈕
+        btn_export = tk.Button(
+            right_container,
+            text="匯出",
+            command=lambda: export_to_csv(section),
+            width=8,
+        )
+        btn_export.pack(side="left", padx=2)
+
+        # CSV 匯入按鈕
+        btn_import = tk.Button(
+            right_container,
+            text="匯入",
+            command=lambda: import_csv_with_refresh(section),
+            width=8,
+        )
+        btn_import.pack(side="left", padx=2)
 
     return ent_id, ent_pwd, ent_port
 
@@ -2021,7 +2055,10 @@ def create_client_buttons(
     - 左鍵直接連線，右鍵編輯選單
     """
     btn_container = ttk.Frame(container)
-    btn_container.grid(row=2, column=0, columnspan=10, sticky="w")
+    btn_container.grid(row=2, column=0, columnspan=10, sticky="ew")
+
+    # 確保容器有最小高度，即使沒有按鈕也能接收右鍵事件
+    btn_container.configure(height=100)
 
     # 綁定右鍵選單到容器空白處
     btn_container.bind(
@@ -2029,72 +2066,94 @@ def create_client_buttons(
         lambda e: show_context_menu(e, section, None, btn_container, on_connect),
     )
 
+    # 同時綁定到父容器，確保在空白區域也能觸發
+    container.bind(
+        "<Button-3>",
+        lambda e: show_context_menu(e, section, None, btn_container, on_connect),
+    )
+
     row = 0
     col = 0
-    for i, client in enumerate(clients):
-        client = normalize_client_fields(client)
-        try:
-            tag = client.get("tag", "") or ""
-        except Exception:
-            tag = ""
-        try:
-            client_id = client.get("id", "") or ""
-        except Exception:
-            client_id = ""
-        try:
-            pwd = client.get("pwd", "") or ""
-        except Exception:
-            pwd = ""
 
-        tag = _sanitize_tag(tag)
-        if isinstance(client_id, (int, float)):
-            client_id = str(client_id)
-        client_id = client_id.strip()
-        if client_id.endswith(".0"):
-            client_id = client_id[:-2]
+    # 如果沒有客戶，添加一個透明框架來佔據空間並接收右鍵事件
+    if not clients:
+        dummy_frame = tk.Frame(btn_container, height=200)
+        dummy_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        dummy_frame.grid_propagate(False)
 
-        if isinstance(tag, str) and tag.strip().lower() in (
-            "設備名稱",
-            "id",
-            "item",
-            "name",
-        ):
-            continue
-        if isinstance(client_id, str) and client_id.strip().lower() in (
-            "設備名稱",
-            "id",
-            "item",
-            "name",
-        ):
-            continue
-        if not tag and not client_id:
-            continue
+        # 綁定右鍵事件到透明框架
+        dummy_frame.bind(
+            "<Button-3>",
+            lambda e: show_context_menu(e, section, None, btn_container, on_connect),
+        )
+    else:
+        # 有客戶時的正常處理
+        row = 0
+        col = 0
+        for i, client in enumerate(clients):
+            client = normalize_client_fields(client)
+            try:
+                tag = client.get("tag", "") or ""
+            except Exception:
+                tag = ""
+            try:
+                client_id = client.get("id", "") or ""
+            except Exception:
+                client_id = ""
+            try:
+                pwd = client.get("pwd", "") or ""
+            except Exception:
+                pwd = ""
 
-        try:
-            btn = tk.Button(
-                btn_container,
-                text=f"{tag}\n{client_id}",
-                font=btn_font,
-                width=15,
-                height=4,
-                command=(lambda c=client: on_connect(c)),
-            )
-            btn.grid(row=row, column=col, padx=3, pady=3)
+            tag = _sanitize_tag(tag)
+            if isinstance(client_id, (int, float)):
+                client_id = str(client_id)
+            client_id = client_id.strip()
+            if client_id.endswith(".0"):
+                client_id = client_id[:-2]
 
-            # 綁定右鍵選單到按鈕
-            btn.bind(
-                "<Button-3>",
-                lambda e, c=client: show_context_menu(
-                    e, section, c, btn_container, on_connect
-                ),
-            )
+            if isinstance(tag, str) and tag.strip().lower() in (
+                "設備名稱",
+                "id",
+                "item",
+                "name",
+            ):
+                continue
+            if isinstance(client_id, str) and client_id.strip().lower() in (
+                "設備名稱",
+                "id",
+                "item",
+                "name",
+            ):
+                continue
+            if not tag and not client_id:
+                continue
 
-        except Exception:
-            pass
-        col += 1
-        if col >= cols:
-            col = 0
-            row += 1
+            try:
+                btn = tk.Button(
+                    btn_container,
+                    text=f"{tag}\n{client_id}",
+                    font=btn_font,
+                    width=15,
+                    height=4,
+                    command=(lambda c=client: on_connect(c)),
+                )
+                btn.grid(row=row, column=col, padx=3, pady=3)
+
+                # 綁定右鍵選單到按鈕
+                btn.bind(
+                    "<Button-3>",
+                    lambda e, c=client: show_context_menu(
+                        e, section, c, btn_container, on_connect
+                    ),
+                )
+
+            except Exception:
+                pass
+            col += 1
+            if col >= cols:
+                col = 0
+                row += 1
 
     return btn_container
 
@@ -2268,7 +2327,9 @@ def edit_client(section: str, client: dict, container, on_connect):
 
     # 按鈕容器（放在分隔線下方的下一行，並將按鈕置中）
     button_container = tk.Frame(dialog)
-    button_container.grid(row=4, column=0, columnspan=2, sticky="ew", padx=30, pady=(10, 20))
+    button_container.grid(
+        row=4, column=0, columnspan=2, sticky="ew", padx=30, pady=(10, 20)
+    )
     # 在容器中放一個內部框用於置中按鈕
     button_inner = tk.Frame(button_container)
     button_inner.pack(anchor="center")
@@ -2305,7 +2366,7 @@ def edit_client(section: str, client: dict, container, on_connect):
     )
     cancel_btn.pack(side="left", padx=15, ipady=5, ipadx=10)
     # 已在上方建立輸入欄位與按鈕，避免重複建立造成 UI 元件重複顯示
-    #（先前版本重複建立了一組 grid-based 的輸入欄與按鈕，已移除）
+    # （先前版本重複建立了一組 grid-based 的輸入欄與按鈕，已移除）
 
     # 現在所有元件已建立，依內容重新計算建議尺寸並置中視窗
     try:
@@ -2965,6 +3026,7 @@ class RustDesk:
             self.frame,
             on_connect=lambda cid, pwd, _: self.run_rustdesk(cid, pwd),
             with_port=False,
+            section="rustdesk",
         )
         self.btn_container = create_client_buttons(
             self.frame,
@@ -3070,6 +3132,7 @@ class AnyDesk:
             self.frame,
             on_connect=lambda cid, pwd, _: self.run_anydesk(cid, pwd),
             with_port=False,
+            section="anydesk",
         )
         self.btn_container = create_client_buttons(
             self.frame,
@@ -3250,6 +3313,7 @@ class TightVNC:
             on_connect=lambda cid, pwd, port: self.run_tightvnc("", cid, pwd, port),
             with_port=True,
             default_port="5900",
+            section="tightvnc",
         )
         # 使用共用 buttons helper；on_connect 會得到整個 client dict
         self.btn_container = create_client_buttons(
@@ -3266,6 +3330,22 @@ class TightVNC:
 
 gui = tk.Tk()
 gui.title("Alldesk")
+
+# 建立主選單
+menubar = tk.Menu(gui)
+gui.config(menu=menubar)
+
+
+def import_csv_with_refresh(section: str):
+    """匯入指定區段的資料並重新整理介面"""
+    if messagebox.askyesno(
+        "確認匯入",
+        f"確定要匯入資料到 {section} 區段嗎？\n這將覆蓋現有的 {section} 資料。",
+    ):
+        if import_from_csv(section):
+            refresh_section_data(section)
+            log_and_show("匯入成功", f"{section} 資料已更新", "info")
+
 
 # 調整 Notebook 標籤字型:加大並改為粗體以便與 UI 一致
 style = ttk.Style()
@@ -3310,91 +3390,6 @@ anydesk.set_elements_anydesk()
 
 tightvnc = TightVNC(notebook)
 tightvnc.set_elements_tightvnc()
-
-# 新增 CSV 管理分頁
-csv_frame = ttk.Frame(notebook)
-notebook.add(csv_frame, text="CSV 管理")
-
-
-# 建立 CSV 管理介面
-def create_csv_management_ui():
-    """建立 CSV 管理介面"""
-    global csv_frame, section_var
-
-    # 標題
-    title_label = tk.Label(
-        csv_frame, text="CSV 資料管理", font=("微軟正黑體", 14, "bold")
-    )
-    title_label.pack(pady=10)
-
-    # 說明文字
-    desc_label = tk.Label(
-        csv_frame, text="匯出/匯入各區段的客戶資料", font=("微軟正黑體", 10)
-    )
-    desc_label.pack(pady=5)
-
-    # 按鈕容器
-    button_container = ttk.Frame(csv_frame)
-    button_container.pack(pady=15)
-
-    # 區段選擇
-    section_frame = ttk.Frame(csv_frame)
-    section_frame.pack(pady=10)
-
-    tk.Label(section_frame, text="選擇區段：", font=("微軟正黑體", 10)).pack(
-        side="left", padx=5
-    )
-
-    section_var = tk.StringVar(value="rustdesk")
-    section_combo = ttk.Combobox(
-        section_frame,
-        textvariable=section_var,
-        values=["rustdesk", "anydesk", "tightvnc"],
-        state="readonly",
-        width=15,
-    )
-    section_combo.pack(side="left", padx=5)
-
-    # 匯出按鈕
-    def on_export():
-        section = section_var.get()
-        export_to_csv(section)
-
-    export_btn = tk.Button(
-        button_container,
-        text="匯出 CSV",
-        font=("微軟正黑體", 9),
-        bg="#4CAF50",
-        fg="white",
-        width=12,
-        height=1,
-        command=on_export,
-    )
-    export_btn.pack(side="left", padx=5)
-
-    # 匯入按鈕
-    def on_import():
-        section = section_var.get()
-        if messagebox.askyesno(
-            "確認匯入",
-            f"確定要匯入資料到 {section} 區段嗎？\n這將覆蓋現有的 {section} 資料。",
-        ):
-            if import_from_csv(section):
-                # 重新載入對應分頁的資料
-                refresh_section_data(section)
-                log_and_show("匯入成功", f"{section} 資料已更新", "info")
-
-    import_btn = tk.Button(
-        button_container,
-        text="匯入 CSV",
-        font=("微軟正黑體", 9),
-        bg="#2196F3",
-        fg="white",
-        width=12,
-        height=1,
-        command=on_import,
-    )
-    import_btn.pack(side="left", padx=5)
 
 
 def refresh_section_data(section: str):
@@ -3449,9 +3444,6 @@ def refresh_section_data(section: str):
 # 確保 JSON 檔案存在
 if not ensure_json_exists():
     log_and_show("初始化錯誤", "無法建立 Alldesk.json 檔案", "error")
-
-# 建立介面
-create_csv_management_ui()
 
 # 將主視窗置中於螢幕
 try:

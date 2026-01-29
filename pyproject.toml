@@ -1,0 +1,27 @@
+[project]
+name = "alldesk"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "comtypes==1.4.14",
+    "et-xmlfile==2.0.0",
+    "openpyxl==3.1.5",
+    "packaging==25.0",
+    "python-dateutil==2.9.0.post0",
+    "pywin32==311",
+    "pywinauto==0.6.9",
+    "setuptools==80.9.0",
+    "six==1.17.0",
+    "tzdata==2025.3",
+    "wheel==0.45.1",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.18.0",
+]
+
+[project.scripts]
+build-exe = "pyinstaller --onefile --windowed --icon=lioil.ico Alldesk.py"
