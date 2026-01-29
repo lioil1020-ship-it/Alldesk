@@ -138,7 +138,7 @@ pip install -r requirements.txt
 
 專案所需套件（請使用 `requirements.txt` 安裝以確保版本一致）：
 - comtypes==1.4.14
-- et_xmlfile==2.0.0
+- et-xmlfile==2.0.0
 - openpyxl==3.1.5
 - packaging==25.0
 - python-dateutil==2.9.0.post0
