@@ -1,0 +1,126 @@
+name: Build and Release Alldesk
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ] # 當推送 v1.0, v2.1 等標籤時觸發 Release
+  workflow_dispatch:
+
+permissions:
+  contents: write # 賦予腳本權限建立 Release
+
+jobs:
+  build:
+    name: Build ${{ matrix.build_type }} on ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+        build_type: [onedir, onefile]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Pull Git LFS files
+        run: git lfs pull
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          uv venv
+          source .venv/bin/activate 2>/dev/null || . .venv/Scripts/activate
+          uv pip install pyinstaller
+          uv pip install -e .
+
+      - name: Build onedir (Windows)
+        if: matrix.build_type == 'onedir' && matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          uv run pyinstaller Alldesk-onedir.spec
+
+      - name: Build onefile (Windows)
+        if: matrix.build_type == 'onefile' && matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          uv run pyinstaller Alldesk-onefile.spec
+
+      - name: Build macOS App (onedir)
+        if: matrix.os == 'macos-latest' && matrix.build_type == 'onedir'
+        shell: bash
+        run: |
+          uv run pyinstaller Alldesk-onedir.spec
+
+      - name: Build macOS App (onefile)
+        if: matrix.os == 'macos-latest' && matrix.build_type == 'onefile'
+        shell: bash
+        run: |
+          uv run pyinstaller Alldesk-onefile.spec
+
+      # 因為 macOS 的資料夾必須壓縮後才能 Release
+      - name: Zip macOS App (onedir)
+        if: matrix.os == 'macos-latest' && matrix.build_type == 'onedir'
+        shell: bash
+        run: |
+          cd dist
+          zip -r Alldesk-macOS-onedir.zip Alldesk-macos
+
+      - name: Zip macOS onefile
+        if: matrix.os == 'macos-latest' && matrix.build_type == 'onefile'
+        shell: bash
+        run: |
+          cd dist
+          zip -r Alldesk-macOS-onefile.zip Alldesk-macos-onefile
+      - name: Upload Artifact (Actions 臨時存檔)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alldesk-${{ matrix.build_type }}-${{ matrix.os }}
+          path: dist/Alldesk*
+
+  # 新增 Release Job：收集所有產物並上傳到 Release
+  release:
+    name: Create Release
+    needs: build
+    # 支援 Tag 觸發或手動觸發
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write 
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: raw_artifacts
+
+      - name: Prepare Release Assets
+        shell: bash
+        run: |
+          mkdir -p final_assets
+          # 1. 複製已經是單一檔案的產物 (.zip 或 .exe)
+          find raw_artifacts -type f \( -name "*.zip" -o -name "*.exe" \) -exec cp {} final_assets/ \;
+          
+          # 2. 自動將 Windows 的 onedir 資料夾打包成 zip
+          for dir in raw_artifacts/*-onedir-windows-latest/; do
+            if [ -d "$dir" ]; then
+              zip -r "final_assets/Alldesk-Windows-onedir.zip" "$dir"
+            fi
+          done
+          ls -lh final_assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 僅上傳打包後的檔案，解決速率限制問題
+          files: final_assets/*
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
