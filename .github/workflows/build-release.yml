@@ -3,11 +3,11 @@ name: Build and Release Alldesk
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ] # 當推送 v1.0, v2.1 等標籤時觸發 Release
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
-  contents: write # 賦予腳本權限建立 Release
+  contents: write
 
 jobs:
   build:
@@ -41,59 +41,43 @@ jobs:
           uv pip install pyinstaller
           uv pip install -e .
 
-      - name: Build onedir (Windows)
-        if: matrix.build_type == 'onedir' && matrix.os == 'windows-latest'
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          uv run pyinstaller Alldesk-onedir.spec
+          uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
+          # 如果是 onedir，在 dist 會產出一個資料夾，我們將其壓成 zip
+          if [ "${{ matrix.build_type }}" == "onedir" ]; then
+            cd dist
+            zip -r Alldesk-Windows-onedir.zip Alldesk-onedir/
+          fi
 
-      - name: Build onefile (Windows)
-        if: matrix.build_type == 'onefile' && matrix.os == 'windows-latest'
+      - name: Build (macOS)
+        if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          uv run pyinstaller Alldesk-onefile.spec
-
-      - name: Build macOS App (onedir)
-        if: matrix.os == 'macos-latest' && matrix.build_type == 'onedir'
-        shell: bash
-        run: |
-          uv run pyinstaller Alldesk-onedir.spec
-
-      - name: Build macOS App (onefile)
-        if: matrix.os == 'macos-latest' && matrix.build_type == 'onefile'
-        shell: bash
-        run: |
-          uv run pyinstaller Alldesk-onefile.spec
-
-      # 因為 macOS 的資料夾必須壓縮後才能 Release
-      - name: Zip macOS App (onedir)
-        if: matrix.os == 'macos-latest' && matrix.build_type == 'onedir'
-        shell: bash
-        run: |
+          uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
           cd dist
-          zip -r Alldesk-macOS-onedir.zip Alldesk-macos
+          if [ "${{ matrix.build_type }}" == "onedir" ]; then
+            zip -r Alldesk-macOS-onedir.zip Alldesk-macos/
+          else
+            zip -r Alldesk-macOS-onefile.zip Alldesk-macos-onefile/
+          fi
 
-      - name: Zip macOS onefile
-        if: matrix.os == 'macos-latest' && matrix.build_type == 'onefile'
-        shell: bash
-        run: |
-          cd dist
-          zip -r Alldesk-macOS-onefile.zip Alldesk-macos-onefile
-      - name: Upload Artifact (Actions 臨時存檔)
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Alldesk-${{ matrix.build_type }}-${{ matrix.os }}
-          path: dist/Alldesk*
+          # 關鍵：只上傳最終的 .exe 或 .zip，排除中間檔案
+          path: |
+            dist/*.exe
+            dist/*.zip
 
-  # 新增 Release Job：收集所有產物並上傳到 Release
   release:
     name: Create Release
     needs: build
-    # 支援 Tag 觸發或手動觸發
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write 
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -104,23 +88,20 @@ jobs:
         shell: bash
         run: |
           mkdir -p final_assets
-          # 1. 複製已經是單一檔案的產物 (.zip 或 .exe)
-          find raw_artifacts -type f \( -name "*.zip" -o -name "*.exe" \) -exec cp {} final_assets/ \;
+          # 只抓取真正的發布檔，避免抓到 PyInstaller 產出的其它檔案
+          find raw_artifacts -type f \( -name "Alldesk-*.zip" -o -name "Alldesk-*.exe" \) -exec cp {} final_assets/ \;
           
-          # 2. 自動將 Windows 的 onedir 資料夾打包成 zip
-          for dir in raw_artifacts/*-onedir-windows-latest/; do
-            if [ -d "$dir" ]; then
-              zip -r "final_assets/Alldesk-Windows-onedir.zip" "$dir"
-            fi
-          done
+          # 清理掉名稱重複或不精確的檔案（如有需要）
           ls -lh final_assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          # 僅上傳打包後的檔案，解決速率限制問題
           files: final_assets/*
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          # 設為 false 確保它是正式發布而非 Draft
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
