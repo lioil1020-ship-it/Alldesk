@@ -3,11 +3,11 @@ name: Build and Release Alldesk
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ] # 當推送 v1.0, v2.1 等標籤時觸發
-  workflow_dispatch: # 支援手動觸發執行
+    tags: [ "v*" ]
+  workflow_dispatch:
 
 permissions:
-  contents: write # 賦予建立 Release 的權限
+  contents: write
 
 jobs:
   build:
@@ -49,8 +49,10 @@ jobs:
           uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
           if ("${{ matrix.build_type }}" -eq "onedir") {
             cd dist
-            # 使用 PowerShell 內建指令壓縮，解決 Windows 沒有 zip 指令的問題
-            Compress-Archive -Path "Alldesk-onedir" -DestinationPath "Alldesk-Windows-onedir.zip" -Force
+            # 取得 dist 底下的第一個資料夾名稱 (不論是 Alldesk 還是 Alldesk-onedir)
+            $targetDir = Get-ChildItem -Directory | Select-Object -First 1 -ExpandProperty Name
+            Write-Host "Target directory found: $targetDir"
+            Compress-Archive -Path "$targetDir" -DestinationPath "Alldesk-Windows-onedir.zip" -Force
           }
 
       # --- macOS 專用編譯步驟 ---
@@ -61,27 +63,26 @@ jobs:
           uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
           cd dist
           if [ "${{ matrix.build_type }}" == "onedir" ]; then
-            # macOS onedir 產出的是資料夾
-            zip -r Alldesk-macOS-onedir.zip Alldesk-macos/
+            # 自動偵測 macOS 產出的資料夾名稱
+            targetDir=$(find . -maxdepth 1 -type d -not -path "." | head -n 1)
+            zip -r Alldesk-macOS-onedir.zip "$targetDir"
           else
-            # macOS onefile 產出的是單一檔案，不可加斜線
-            zip Alldesk-macOS-onefile.zip Alldesk-macos-onefile
+            # 針對 onefile 模式，直接壓縮產出的執行檔
+            targetFile=$(find . -maxdepth 1 -type f -not -name "*.zip" | head -n 1)
+            zip Alldesk-macOS-onefile.zip "$targetFile"
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Alldesk-${{ matrix.build_type }}-${{ matrix.os }}
-          # 僅上傳最終產出的 zip 或單一 exe，避免上傳數百個小檔案
           path: |
             dist/*.zip
-            dist/Alldesk.exe
-            dist/Alldesk-onefile.exe
+            dist/*.exe
 
   release:
     name: Create Release
     needs: build
-    # 支援 Tag 觸發或手動點擊 Workflow Dispatch
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -94,19 +95,15 @@ jobs:
         shell: bash
         run: |
           mkdir -p final_assets
-          # 精確收集所有壓縮檔與執行檔，排除中間過程的暫存檔
-          find raw_artifacts -type f \( -name "Alldesk-*.zip" -o -name "Alldesk*.exe" \) -exec cp {} final_assets/ \;
-          echo "準備上傳至 Release 的檔案清單："
+          # 只收集 zip 和 exe，確保不觸發速率限制
+          find raw_artifacts -type f \( -name "*.zip" -o -name "*.exe" \) -exec cp {} final_assets/ \;
           ls -lh final_assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: final_assets/*
-          # tag_name 確保手動執行時也能抓到名稱
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

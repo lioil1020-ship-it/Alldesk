@@ -2,29 +2,22 @@
 import os
 import sys
 
-# 動態檢查圖示檔案
-# Windows: lioil.ico，macOS: lioil.icns
+# 資源清單
 datas_list = [('exe', 'exe')]
 
-# 根據平台設定應用程式名稱
-app_name = 'Alldesk-macos-onefile' if sys.platform == 'darwin' else 'Alldesk'
+# Windows 端名稱設定為 Alldesk-onefile
+app_name = 'Alldesk-macos-onefile' if sys.platform == 'darwin' else 'Alldesk-onefile'
 
-# 根據運行平台選擇圖示
+# 動態檢查圖示檔案並設定參數
+icon_param = None
 if sys.platform == 'darwin':  # macOS
     if os.path.exists('lioil.icns'):
         datas_list.insert(0, ('lioil.icns', '.'))
+        icon_param = 'lioil.icns'
 else:  # Windows
     if os.path.exists('lioil.ico'):
         datas_list.insert(0, ('lioil.ico', '.'))
-
-# 設定 EXE 圖示參數
-icon_param = []
-if sys.platform == 'darwin':
-    if os.path.exists('lioil.icns'):
-        icon_param = ['lioil.icns']
-else:
-    if os.path.exists('lioil.ico'):
-        icon_param = ['lioil.ico']
+        icon_param = 'lioil.ico'
 
 a = Analysis(
     ['Alldesk.py'],
@@ -60,6 +53,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=icon_param,
+    icon=icon_param, # 使用修正後的圖示變數
 )
-
