@@ -3,11 +3,11 @@ name: Build and Release Alldesk
 on:
   push:
     branches: [ "main" ]
-    tags: [ "v*" ]
-  workflow_dispatch:
+    tags: [ "v*" ] # 當推送 v1.0, v2.1 等標籤時觸發
+  workflow_dispatch: # 支援手動觸發
 
 permissions:
-  contents: write
+  contents: write # 賦予建立 Release 的權限
 
 jobs:
   build:
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
-          # 如果是 onedir，在 dist 會產出一個資料夾，我們將其壓成 zip
+          # 如果是 onedir，將產出的資料夾壓成 zip，避免散裝上傳
           if [ "${{ matrix.build_type }}" == "onedir" ]; then
             cd dist
             zip -r Alldesk-Windows-onedir.zip Alldesk-onedir/
@@ -59,23 +59,26 @@ jobs:
           uv run pyinstaller Alldesk-${{ matrix.build_type }}.spec
           cd dist
           if [ "${{ matrix.build_type }}" == "onedir" ]; then
+            # macOS onedir 產出的是 .app 或資料夾
             zip -r Alldesk-macOS-onedir.zip Alldesk-macos/
           else
-            zip -r Alldesk-macOS-onefile.zip Alldesk-macos-onefile/
+            # macOS onefile 產出的是單一執行檔，壓縮時不可加斜線
+            zip Alldesk-macOS-onefile.zip Alldesk-macos-onefile
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Alldesk-${{ matrix.build_type }}-${{ matrix.os }}
-          # 關鍵：只上傳最終的 .exe 或 .zip，排除中間檔案
+          # 僅上傳最終產出的 zip 或 Windows 的單一 exe
           path: |
-            dist/*.exe
             dist/*.zip
+            dist/Alldesk-onefile.exe
 
   release:
     name: Create Release
     needs: build
+    # 僅在推送標籤或手動觸發時執行
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -88,10 +91,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p final_assets
-          # 只抓取真正的發布檔，避免抓到 PyInstaller 產出的其它檔案
+          # 只抓取符合命名的壓縮檔與執行檔，過濾掉中間暫存檔
           find raw_artifacts -type f \( -name "Alldesk-*.zip" -o -name "Alldesk-*.exe" \) -exec cp {} final_assets/ \;
-          
-          # 清理掉名稱重複或不精確的檔案（如有需要）
+          echo "準備上傳的檔案："
           ls -lh final_assets/
 
       - name: Create Release
@@ -100,7 +102,6 @@ jobs:
           files: final_assets/*
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          # 設為 false 確保它是正式發布而非 Draft
           draft: false
           prerelease: false
         env:
